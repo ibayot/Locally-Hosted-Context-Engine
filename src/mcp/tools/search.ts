@@ -107,6 +107,36 @@ export async function handleSemanticSearch(
     }
   }
 
+  // Retrieval audit table (sorted by highest score, max 10 entries)
+  const auditRows = Array.from(fileGroups.entries())
+    .map(([filePath, fileResults]) => {
+      const best = fileResults.reduce((acc, cur) => {
+        const currentScore = cur.relevanceScore ?? 0;
+        return currentScore > (acc.relevanceScore ?? 0) ? cur : acc;
+      }, fileResults[0]);
+
+      return {
+        filePath,
+        score: best.relevanceScore,
+        matchType: best.matchType ?? 'semantic',
+        retrievedAt: best.retrievedAt,
+      };
+    })
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 10);
+
+  if (auditRows.length > 0) {
+    output += `## Retrieval Audit\n\n`;
+    output += `| File | Score | Type | Retrieved |\n`;
+    output += `|------|-------|------|-----------|\n`;
+    for (const row of auditRows) {
+      const scoreText = row.score !== undefined ? `${(row.score * 100).toFixed(0)}%` : 'n/a';
+      const retrieved = row.retrievedAt ?? 'now';
+      output += `| \`${row.filePath}\` | ${scoreText} | ${row.matchType} | ${retrieved} |\n`;
+    }
+    output += `\n`;
+  }
+
   output += `---\n`;
   output += `_Use \`get_context_for_prompt\` for more comprehensive context or \`get_file\` for complete file contents._\n`;
 
@@ -139,4 +169,3 @@ For comprehensive context with file summaries and related files, use get_context
     required: ['query'],
   },
 };
-

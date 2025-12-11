@@ -107,6 +107,20 @@ describe('semantic_search Tool', () => {
       expect(result).toContain('```');
       expect(result).toContain('function test()');
     });
+
+    it('should include retrieval audit table when results exist', async () => {
+      const mockResults: SearchResult[] = [
+        { path: 'src/a.ts', content: 'alpha', lines: '1-2', relevanceScore: 0.8, matchType: 'semantic', retrievedAt: '2024-01-01T00:00:00.000Z' },
+        { path: 'src/b.ts', content: 'beta', lines: '3-4', relevanceScore: 0.6, matchType: 'keyword', retrievedAt: '2024-01-02T00:00:00.000Z' },
+      ];
+      mockServiceClient.semanticSearch.mockResolvedValue(mockResults);
+
+      const result = await handleSemanticSearch({ query: 'audit' }, mockServiceClient as any);
+
+      expect(result).toContain('Retrieval Audit');
+      expect(result).toContain('src/a.ts');
+      expect(result).toContain('src/b.ts');
+    });
   });
 
   describe('Tool Schema', () => {
@@ -125,4 +139,3 @@ describe('semantic_search Tool', () => {
     });
   });
 });
-

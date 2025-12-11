@@ -18,6 +18,8 @@ import { DirectContext } from '@augmentcode/auggie-sdk';
 import * as fs from 'fs';
 import * as path from 'path';
 import { minimatch } from 'minimatch';
+import { Worker } from 'worker_threads';
+import { WorkerMessage } from '../worker/messages.js';
 
 // ============================================================================
 // Type Definitions
@@ -30,6 +32,32 @@ export interface SearchResult {
   lines?: string;
   /** Relevance score normalized to 0-1 range */
   relevanceScore?: number;
+  matchType?: 'semantic' | 'keyword' | 'hybrid';
+  retrievedAt?: string;
+  chunkId?: string;
+}
+
+export interface IndexStatus {
+  workspace: string;
+  status: 'idle' | 'indexing' | 'error';
+  lastIndexed: string | null;
+  fileCount: number;
+  isStale: boolean;
+  lastError?: string;
+}
+
+export interface IndexResult {
+  indexed: number;
+  skipped: number;
+  errors: string[];
+  duration: number;
+}
+
+export interface WatcherStatus {
+  enabled: boolean;
+  watching: number;
+  pendingChanges: number;
+  lastFlush?: string;
 }
 
 export interface SnippetInfo {
@@ -229,6 +257,12 @@ export class ContextServiceClient {
   /** Maximum cache size */
   private readonly maxCacheSize = 100;
 
+  /** Index status metadata */
+  private indexStatus: IndexStatus;
+
+  /** Skip auto-index on next initialization (used after clearing state) */
+  private skipAutoIndexOnce = false;
+
   /** Loaded ignore patterns (from .gitignore and .contextignore) */
   private ignorePatterns: string[] = [];
 
@@ -237,6 +271,42 @@ export class ContextServiceClient {
 
   constructor(workspacePath: string) {
     this.workspacePath = workspacePath;
+    this.indexStatus = {
+      workspace: workspacePath,
+      status: 'idle',
+      lastIndexed: null,
+      fileCount: 0,
+      isStale: true,
+    };
+  }
+
+  /**
+   * Compute staleness based on last indexed timestamp (stale if >24h or missing)
+   */
+  private computeIsStale(lastIndexed: string | null): boolean {
+    if (!lastIndexed) return true;
+    const last = Date.parse(lastIndexed);
+    if (Number.isNaN(last)) return true;
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    return Date.now() - last > ONE_DAY_MS;
+  }
+
+  /**
+   * Update index status with staleness recompute
+   */
+  private updateIndexStatus(partial: Partial<IndexStatus>): void {
+    const nextLastIndexed = partial.lastIndexed ?? this.indexStatus.lastIndexed;
+    const nextIsStale =
+      partial.isStale !== undefined
+        ? partial.isStale
+        : this.computeIsStale(nextLastIndexed);
+
+    this.indexStatus = {
+      ...this.indexStatus,
+      ...partial,
+      lastIndexed: nextLastIndexed,
+      isStale: nextIsStale,
+    };
   }
 
   /**
@@ -287,6 +357,32 @@ export class ContextServiceClient {
       .split('\n')
       .map(line => line.trim())
       .filter(line => line && !line.startsWith('#')); // Remove empty lines and comments
+  }
+
+  // ==========================================================================
+  // Policy / Environment Checks
+  // ==========================================================================
+
+  /**
+   * Determine whether offline-only policy is enabled via env var.
+   */
+  private isOfflineMode(): boolean {
+    const flag = process.env.CONTEXT_ENGINE_OFFLINE_ONLY;
+    if (!flag) return false;
+    const normalized = flag.toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+  }
+
+  /**
+   * Treat any non-local/non-file API URL as remote.
+   */
+  private isRemoteApiUrl(apiUrl: string | undefined): boolean {
+    if (!apiUrl) return true; // Default SDK endpoint is remote
+    const lower = apiUrl.toLowerCase();
+    if (lower.startsWith('http://localhost') || lower.startsWith('https://localhost')) return false;
+    if (lower.startsWith('http://127.0.0.1') || lower.startsWith('https://127.0.0.1')) return false;
+    if (lower.startsWith('file://')) return false;
+    return true;
   }
 
   /**
@@ -385,6 +481,15 @@ export class ContextServiceClient {
 
   private async doInitialize(): Promise<void> {
     const stateFilePath = this.getStateFilePath();
+    const offlineMode = this.isOfflineMode();
+    const apiUrl = process.env.AUGMENT_API_URL;
+
+    if (offlineMode && this.isRemoteApiUrl(apiUrl)) {
+      const message = 'Offline mode enforced (CONTEXT_ENGINE_OFFLINE_ONLY=1) but AUGMENT_API_URL points to a remote endpoint. Set it to a local endpoint (e.g., http://localhost) or disable offline mode.';
+      console.error(message);
+      this.updateIndexStatus({ status: 'error', lastError: message });
+      throw new Error(message);
+    }
 
     try {
       // Try to restore from saved state
@@ -392,6 +497,16 @@ export class ContextServiceClient {
         console.error(`Restoring context from ${stateFilePath}`);
         this.context = await DirectContext.importFromFile(stateFilePath);
         console.error('Context restored successfully');
+        try {
+          const stats = fs.statSync(stateFilePath);
+          const restoredAt = stats.mtime.toISOString();
+          this.updateIndexStatus({
+            status: 'idle',
+            lastIndexed: restoredAt,
+          });
+        } catch {
+          // ignore stat errors, keep defaults
+        }
         return;
       }
     } catch (error) {
@@ -403,6 +518,13 @@ export class ContextServiceClient {
       } catch {
         // Ignore deletion errors
       }
+    }
+
+    if (offlineMode) {
+      const message = `Offline mode is enabled but no saved index found at ${stateFilePath}. Connect online once to build the index or disable CONTEXT_ENGINE_OFFLINE_ONLY.`;
+      console.error(message);
+      this.updateIndexStatus({ status: 'error', lastError: message });
+      throw new Error(message);
     }
 
     // Create new context
@@ -425,15 +547,24 @@ export class ContextServiceClient {
       throw createError;
     }
 
-    // Auto-index workspace if no state file exists
-    console.error('No existing index found - auto-indexing workspace...');
-    try {
-      await this.indexWorkspace();
-      console.error('Auto-indexing completed');
-    } catch (error) {
-      console.error('Auto-indexing failed (you can manually call index_workspace tool):', error);
-      // Don't throw - allow server to start even if auto-indexing fails
-      // User can manually trigger indexing later
+    // Auto-index workspace if no state file exists (unless skipped)
+    if (!this.skipAutoIndexOnce) {
+      console.error('No existing index found - auto-indexing workspace...');
+      try {
+        await this.indexWorkspace();
+        console.error('Auto-indexing completed');
+      } catch (error) {
+        console.error('Auto-indexing failed (you can manually call index_workspace tool):', error);
+        // Don't throw - allow server to start even if auto-indexing fails
+        // User can manually trigger indexing later
+        this.updateIndexStatus({
+          status: 'error',
+          lastError: String(error),
+        });
+      }
+    } else {
+      this.skipAutoIndexOnce = false;
+      this.updateIndexStatus({ status: 'idle' });
     }
   }
 
@@ -599,7 +730,17 @@ export class ContextServiceClient {
   /**
    * Index the workspace directory using DirectContext SDK
    */
-  async indexWorkspace(): Promise<void> {
+  async indexWorkspace(): Promise<IndexResult> {
+    const startTime = Date.now();
+
+    if (this.isOfflineMode()) {
+      const message = 'Indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
+      console.error(message);
+      this.updateIndexStatus({ status: 'error', lastError: message });
+      throw new Error(message);
+    }
+
+    this.updateIndexStatus({ status: 'indexing', lastError: undefined });
     console.error(`Indexing workspace: ${this.workspacePath}`);
     console.error(`API URL: ${process.env.AUGMENT_API_URL || '(default)'}`);
     console.error(`API Token: ${process.env.AUGMENT_API_TOKEN ? '(set)' : '(NOT SET)'}`);
@@ -612,7 +753,17 @@ export class ContextServiceClient {
 
     if (filePaths.length === 0) {
       console.error('No indexable files found');
-      return;
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: 'No indexable files found',
+        fileCount: 0,
+      });
+      return {
+        indexed: 0,
+        skipped: 0,
+        errors: ['No indexable files found'],
+        duration: Date.now() - startTime,
+      };
     }
 
     // Log all discovered files for debugging
@@ -637,13 +788,24 @@ export class ContextServiceClient {
 
     if (files.length === 0) {
       console.error('No files to index after filtering');
-      return;
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: 'No indexable files found',
+        fileCount: 0,
+      });
+      return {
+        indexed: 0,
+        skipped: skippedCount,
+        errors: ['No indexable files found'],
+        duration: Date.now() - startTime,
+      };
     }
 
     // Add files to index in batches with error handling
     const BATCH_SIZE = 10; // Reduced batch size for better error isolation
     let successCount = 0;
     let errorCount = 0;
+    const errors: string[] = [];
 
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
@@ -663,6 +825,7 @@ export class ContextServiceClient {
         console.error(`  ✓ Batch ${batchNum} indexed successfully`);
       } catch (error) {
         errorCount += batch.length;
+        errors.push(`Batch ${batchNum}: ${error instanceof Error ? error.message : String(error)}`);
         console.error(`  ✗ Batch ${batchNum} failed:`, error);
 
         // Try indexing files individually to isolate the problematic file
@@ -677,6 +840,7 @@ export class ContextServiceClient {
             // Log file content preview for debugging
             const preview = file.contents.substring(0, 200).replace(/\n/g, '\\n');
             console.error(`      Content preview: ${preview}...`);
+            errors.push(`${file.path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
           }
         }
       }
@@ -688,11 +852,240 @@ export class ContextServiceClient {
     if (successCount > 0) {
       await this.saveState();
       console.error('Context state saved');
+
+      this.updateIndexStatus({
+        status: errorCount > 0 ? 'error' : 'idle',
+        lastIndexed: new Date().toISOString(),
+        fileCount: successCount,
+        lastError: errors.length ? errors[errors.length - 1] : undefined,
+      });
+    } else {
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: errors[0] || 'Indexing failed',
+        fileCount: 0,
+      });
     }
 
     // Clear cache after reindexing
     this.clearCache();
     console.error('Workspace indexing finished');
+
+    return {
+      indexed: successCount,
+      skipped: skippedCount + errorCount,
+      errors,
+      duration: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Run workspace indexing in a background worker thread
+   */
+  async indexWorkspaceInBackground(): Promise<void> {
+    if (this.isOfflineMode()) {
+      const message = 'Background indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
+      console.error(message);
+      this.updateIndexStatus({ status: 'error', lastError: message });
+      throw new Error(message);
+    }
+
+    return new Promise((resolve, reject) => {
+      this.updateIndexStatus({ status: 'indexing', lastError: undefined });
+      const worker = new Worker(new URL('../worker/IndexWorker.js', import.meta.url), {
+        workerData: {
+          workspacePath: this.workspacePath,
+        },
+      });
+
+      worker.on('message', (message: WorkerMessage) => {
+        if (message.type === 'index_complete') {
+          this.updateIndexStatus({
+            status: message.errors?.length ? 'error' : 'idle',
+            lastIndexed: new Date().toISOString(),
+            fileCount: message.count,
+            lastError: message.errors?.[message.errors.length - 1],
+          });
+          resolve();
+        } else if (message.type === 'index_error') {
+          this.updateIndexStatus({
+            status: 'error',
+            lastError: message.error,
+          });
+          reject(new Error(message.error));
+        }
+      });
+
+      worker.on('error', (error) => {
+        this.updateIndexStatus({ status: 'error', lastError: String(error) });
+        reject(error);
+      });
+
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          const err = new Error(`Index worker exited with code ${code}`);
+          this.updateIndexStatus({ status: 'error', lastError: err.message });
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Get current index status metadata
+   */
+  getIndexStatus(): IndexStatus {
+    // Refresh staleness dynamically based on lastIndexed
+    this.updateIndexStatus({});
+    return { ...this.indexStatus };
+  }
+
+  /**
+   * Incrementally index a list of file paths (relative to workspace)
+   */
+  async indexFiles(filePaths: string[]): Promise<IndexResult> {
+    const startTime = Date.now();
+
+    if (this.isOfflineMode()) {
+      const message = 'Incremental indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
+      console.error(message);
+      this.updateIndexStatus({ status: 'error', lastError: message });
+      throw new Error(message);
+    }
+
+    if (!filePaths || filePaths.length === 0) {
+      return { indexed: 0, skipped: 0, errors: ['No files provided'], duration: 0 };
+    }
+
+    this.updateIndexStatus({ status: 'indexing', lastError: undefined });
+    const context = await this.ensureInitialized();
+    this.loadIgnorePatterns();
+
+    const uniquePaths = Array.from(new Set(filePaths));
+    const files: Array<{ path: string; contents: string }> = [];
+    const errors: string[] = [];
+    let skipped = 0;
+
+    for (const rawPath of uniquePaths) {
+      // Normalize and ensure path stays within workspace
+      const relativePath = path.isAbsolute(rawPath)
+        ? path.relative(this.workspacePath, rawPath)
+        : rawPath;
+
+      if (!relativePath || relativePath.startsWith('..')) {
+        skipped++;
+        continue;
+      }
+
+      if (this.shouldIgnorePath(relativePath)) {
+        skipped++;
+        continue;
+      }
+
+      if (!this.shouldIndexFile(relativePath)) {
+        skipped++;
+        continue;
+      }
+
+      const contents = this.readFileContents(relativePath);
+      if (contents !== null) {
+        files.push({ path: relativePath, contents });
+      } else {
+        skipped++;
+      }
+    }
+
+    if (files.length === 0) {
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: 'No indexable file changes provided',
+      });
+      return {
+        indexed: 0,
+        skipped,
+        errors: ['No indexable file changes provided'],
+        duration: Date.now() - startTime,
+      };
+    }
+
+    let successCount = 0;
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      const isLastBatch = i + BATCH_SIZE >= files.length;
+      try {
+        await context.addToIndex(batch, { waitForIndexing: isLastBatch });
+        successCount += batch.length;
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+        // Attempt per-file indexing
+        for (const file of batch) {
+          try {
+            await context.addToIndex([file], { waitForIndexing: false });
+            successCount++;
+          } catch (fileError) {
+            errors.push(`${file.path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+          }
+        }
+      }
+    }
+
+    if (successCount > 0) {
+      await this.saveState();
+      this.updateIndexStatus({
+        status: errors.length ? 'error' : 'idle',
+        lastIndexed: new Date().toISOString(),
+        fileCount: Math.max(this.indexStatus.fileCount, successCount),
+        lastError: errors[errors.length - 1],
+      });
+    } else {
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: errors[0] || 'Incremental indexing failed',
+      });
+    }
+
+    this.clearCache();
+
+    return {
+      indexed: successCount,
+      skipped,
+      errors,
+      duration: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Clear index state and caches
+   */
+  async clearIndex(): Promise<void> {
+    // Reset SDK instances
+    this.context = null;
+    this.initPromise = null;
+    this.skipAutoIndexOnce = true;
+
+    // Delete persisted state file if it exists
+    const stateFilePath = this.getStateFilePath();
+    if (fs.existsSync(stateFilePath)) {
+      try {
+        fs.unlinkSync(stateFilePath);
+        console.error(`Deleted state file: ${stateFilePath}`);
+      } catch (error) {
+        console.error('Failed to delete state file:', error);
+      }
+    }
+
+    // Clear caches
+    this.clearCache();
+    this.ignorePatternsLoaded = false;
+    this.ignorePatterns = [];
+
+    this.updateIndexStatus({
+      status: 'idle',
+      lastIndexed: null,
+      fileCount: 0,
+      lastError: undefined,
+    });
   }
 
   /**
@@ -786,23 +1179,51 @@ export class ContextServiceClient {
       return results;
     }
 
-    // Split by "Path:" prefix to get individual file blocks
-    const pathBlocks = formattedResults.split(/(?=^Path:\s*)/m).filter(block => block.trim());
+    const retrievedAt = new Date().toISOString();
+
+    const hasPathPrefix = /^Path:\s*/m.test(formattedResults);
+    const blockSplitter = hasPathPrefix ? /(?=^Path:\s*)/m : /(?=^##\s+)/m;
+
+    // Split by detected prefix to get individual file blocks
+    const pathBlocks = formattedResults.split(blockSplitter).filter(block => block.trim());
 
     for (const block of pathBlocks) {
       if (results.length >= topK) break;
 
-      // Extract file path from "Path: filepath" line
-      const pathMatch = block.match(/^Path:\s*(.+?)(?:\s*\n|$)/);
-      if (!pathMatch) continue;
+      let filePath: string | null = null;
+      let content = '';
+      let lineRange: string | undefined;
 
-      const filePath = pathMatch[1].trim();
+      if (hasPathPrefix) {
+        const pathMatch = block.match(/^Path:\s*(.+?)(?:\s*\n|$)/m);
+        if (!pathMatch) continue;
 
-      // Extract code content (everything after the Path: line)
-      const contentStart = block.indexOf('\n');
-      if (contentStart === -1) continue;
+        filePath = pathMatch[1].trim();
 
-      let content = block.substring(contentStart + 1).trim();
+        const contentStart = block.indexOf('\n');
+        if (contentStart === -1) continue;
+
+        content = block.substring(contentStart + 1).trim();
+      } else {
+        const headingMatch = block.match(/^##\s+(.+?)(?:\s*$|\n)/m);
+        if (!headingMatch) continue;
+        filePath = headingMatch[1].trim();
+
+        const linesMatch = block.match(/^Lines?\s+([0-9]+(?:-[0-9]+)?)/mi);
+        if (linesMatch) {
+          lineRange = linesMatch[1];
+        }
+
+        const fenceMatch = block.match(/```[a-zA-Z]*\n?([\s\S]*?)```/m);
+        if (fenceMatch && fenceMatch[1]) {
+          content = fenceMatch[1].trim();
+        } else {
+          const blankIndex = block.indexOf('\n\n');
+          content = blankIndex !== -1
+            ? block.substring(blankIndex).trim()
+            : block.substring(block.indexOf('\n') + 1).trim();
+        }
+      }
 
       // Remove the "..." markers that indicate truncation
       content = content.replace(/^\.\.\.\s*$/gm, '').trim();
@@ -820,16 +1241,20 @@ export class ContextServiceClient {
       content = cleanedLines.join('\n').trim();
 
       // Determine line range
-      const lineRange = lines.length > 0
-        ? `${Math.min(...lines)}-${Math.max(...lines)}`
-        : undefined;
+      if (!lineRange) {
+        lineRange = lines.length > 0
+          ? `${Math.min(...lines)}-${Math.max(...lines)}`
+          : undefined;
+      }
 
-      if (content) {
+      if (content && filePath) {
         results.push({
           path: filePath.replace(/\\/g, '/'), // Normalize path separators
           content,
           lines: lineRange,
           relevanceScore: 1 - (results.length / topK), // Approximate relevance based on order
+          matchType: 'semantic',
+          retrievedAt,
         });
       }
     }
@@ -1311,4 +1736,3 @@ export class ContextServiceClient {
     return `Context for "${query}": ${files.length} files from ${topDir || 'multiple directories'}, primarily containing ${dominantType} definitions`;
   }
 }
-

@@ -10,6 +10,8 @@ import { ContextServiceClient } from '../serviceClient.js';
 export interface IndexWorkspaceArgs {
   /** Force re-indexing even if index exists (default: false) */
   force?: boolean;
+  /** Run indexing in background worker (default: false) */
+  background?: boolean;
 }
 
 /**
@@ -19,13 +21,24 @@ export async function handleIndexWorkspace(
   args: IndexWorkspaceArgs,
   serviceClient: ContextServiceClient
 ): Promise<string> {
-  const { force = false } = args;
+  const { force = false, background = false } = args;
   
   const startTime = Date.now();
   
   try {
     console.error(`[index_workspace] Starting workspace indexing (force=${force})...`);
-    
+
+    if (background) {
+      // Fire and forget background worker
+      serviceClient.indexWorkspaceInBackground().catch((error) => {
+        console.error('[index_workspace] Background indexing failed:', error);
+      });
+      return JSON.stringify({
+        success: true,
+        message: 'Background indexing started',
+      }, null, 2);
+    }
+
     await serviceClient.indexWorkspace();
     
     const elapsed = Date.now() - startTime;
@@ -82,8 +95,12 @@ and will be automatically restored on future server starts.`,
         description: 'Force re-indexing even if an index already exists (default: false)',
         default: false,
       },
+      background: {
+        type: 'boolean',
+        description: 'Run indexing in a background worker thread (non-blocking)',
+        default: false,
+      },
     },
     required: [],
   },
 };
-

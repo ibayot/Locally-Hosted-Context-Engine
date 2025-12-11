@@ -13,6 +13,9 @@
  */
 
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // Mock DirectContext before importing the module under test
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -62,6 +65,7 @@ describe('ContextServiceClient', () => {
   afterEach(() => {
     delete process.env.AUGMENT_API_TOKEN;
     delete process.env.AUGMENT_API_URL;
+    delete process.env.CONTEXT_ENGINE_OFFLINE_ONLY;
   });
 
   describe('Path Validation', () => {
@@ -201,6 +205,20 @@ content
         expect(results[0].relevanceScore).toBeGreaterThanOrEqual(0);
         expect(results[0].relevanceScore).toBeLessThanOrEqual(1);
       }
+    });
+  });
+
+  describe('Offline Policy', () => {
+    it('should reject initialization when offline mode is enabled with remote API', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-offline-'));
+      process.env.CONTEXT_ENGINE_OFFLINE_ONLY = '1';
+      process.env.AUGMENT_API_URL = 'https://api.augmentcode.com';
+
+      const offlineClient = new ContextServiceClient(tempDir);
+
+      await expect(offlineClient.semanticSearch('offline test', 1)).rejects.toThrow(/offline mode/i);
+
+      fs.rmSync(tempDir, { recursive: true, force: true });
     });
   });
 

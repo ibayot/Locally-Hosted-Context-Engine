@@ -22,6 +22,7 @@ async function main() {
   const args = process.argv.slice(2);
   let workspacePath = process.cwd();
   let shouldIndex = false;
+  let enableWatcher = false;
 
   // Parse command line arguments
   for (let i = 0; i < args.length; i++) {
@@ -32,6 +33,8 @@ async function main() {
       i++;
     } else if (arg === '--index' || arg === '-i') {
       shouldIndex = true;
+    } else if (arg === '--watch' || arg === '-W') {
+      enableWatcher = true;
     } else if (arg === '--help' || arg === '-h') {
       console.error(`
 Context Engine MCP Server
@@ -41,6 +44,7 @@ Usage: context-engine-mcp [options]
 Options:
   --workspace, -w <path>   Workspace directory to index (default: current directory)
   --index, -i              Index the workspace before starting server
+  --watch, -W              Enable filesystem watcher for incremental indexing
   --help, -h               Show this help message
 
 Environment Variables:
@@ -75,10 +79,13 @@ codex mcp add context-engine -- node /absolute/path/to/dist/index.js --workspace
   console.error('Context Engine MCP Server');
   console.error('='.repeat(80));
   console.error(`Workspace: ${workspacePath}`);
+  console.error(`Watcher: ${enableWatcher ? 'enabled' : 'disabled'}`);
   console.error('');
 
   try {
-    const server = new ContextEngineMCPServer(workspacePath);
+    const server = new ContextEngineMCPServer(workspacePath, 'context-engine', {
+      enableWatcher,
+    });
 
     // Index workspace if requested
     if (shouldIndex) {
@@ -101,4 +108,3 @@ main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);
 });
-

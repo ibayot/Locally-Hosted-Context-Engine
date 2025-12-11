@@ -1,0 +1,112 @@
+import chokidar from 'chokidar';
+import * as path from 'path';
+import { FileChange, FileChangeType, WatcherOptions, WatcherHooks } from './types.js';
+import { WatcherStatus } from '../mcp/serviceClient.js';
+
+/**
+ * Lightweight file watcher that batches file changes and forwards them
+ * to a callback. Designed to be optional and safe (disabled by default).
+ */
+export class FileWatcher {
+  private watcher: chokidar.FSWatcher | null = null;
+  private pendingChanges: Map<string, FileChange> = new Map();
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private lastFlush: string | undefined;
+
+  private readonly root: string;
+  private readonly hooks: WatcherHooks;
+  private readonly options: Required<WatcherOptions>;
+
+  constructor(root: string, hooks: WatcherHooks, options?: WatcherOptions) {
+    this.root = root;
+    this.hooks = hooks;
+    this.options = {
+      debounceMs: options?.debounceMs ?? 500,
+      ignored: options?.ignored ?? [],
+      persistent: options?.persistent ?? false,
+      maxBatchSize: options?.maxBatchSize ?? 100,
+    };
+  }
+
+  start(): void {
+    if (this.watcher) return;
+
+    this.watcher = chokidar.watch(this.root, {
+      ignoreInitial: true,
+      persistent: this.options.persistent,
+      ignored: this.options.ignored,
+      awaitWriteFinish: {
+        stabilityThreshold: 200,
+        pollInterval: 100,
+      },
+    });
+
+    this.watcher.on('add', (p: string) => this.handleEvent('add', p));
+    this.watcher.on('change', (p: string) => this.handleEvent('change', p));
+    this.watcher.on('unlink', (p: string) => this.handleEvent('unlink', p));
+  }
+
+  async stop(): Promise<void> {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
+    if (this.watcher) {
+      await this.watcher.close();
+      this.watcher = null;
+    }
+  }
+
+  /**
+   * Exposed for tests and chokidar callbacks.
+   */
+  handleEvent(type: FileChangeType, filePath: string): void {
+    const relative = path.relative(this.root, filePath);
+    if (!relative || relative.startsWith('..')) return;
+
+    this.pendingChanges.set(relative, {
+      type,
+      path: relative,
+      timestamp: Date.now(),
+    });
+
+    this.scheduleFlush();
+  }
+
+  private scheduleFlush(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    this.debounceTimer = setTimeout(() => {
+      void this.flush();
+    }, this.options.debounceMs);
+  }
+
+  private async flush(): Promise<void> {
+    if (this.pendingChanges.size === 0) return;
+
+    const changes = Array.from(this.pendingChanges.values());
+    this.pendingChanges.clear();
+
+    const batches: FileChange[][] = [];
+    const batchSize = this.options.maxBatchSize;
+    for (let i = 0; i < changes.length; i += batchSize) {
+      batches.push(changes.slice(i, i + batchSize));
+    }
+
+    for (const batch of batches) {
+      await this.hooks.onBatch(batch);
+    }
+
+    this.lastFlush = new Date().toISOString();
+  }
+
+  getStatus(): WatcherStatus {
+    return {
+      enabled: Boolean(this.watcher),
+      watching: this.watcher ? 1 : 0,
+      pendingChanges: this.pendingChanges.size,
+      lastFlush: this.lastFlush,
+    };
+  }
+}

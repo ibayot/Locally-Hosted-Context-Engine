@@ -28,16 +28,32 @@ import { getFileTool, handleGetFile } from './tools/file.js';
 import { getContextTool, handleGetContext } from './tools/context.js';
 import { enhancePromptTool, handleEnhancePrompt } from './tools/enhance.js';
 import { indexWorkspaceTool, handleIndexWorkspace } from './tools/index.js';
+import { indexStatusTool, handleIndexStatus } from './tools/status.js';
+import {
+  reindexWorkspaceTool,
+  clearIndexTool,
+  handleReindexWorkspace,
+  handleClearIndex,
+} from './tools/lifecycle.js';
+import { toolManifestTool, handleToolManifest } from './tools/manifest.js';
+import { FileWatcher } from '../watcher/index.js';
 
 export class ContextEngineMCPServer {
   private server: Server;
   private serviceClient: ContextServiceClient;
   private isShuttingDown = false;
   private workspacePath: string;
+  private fileWatcher?: FileWatcher;
+  private enableWatcher: boolean;
 
-  constructor(workspacePath: string, serverName: string = 'context-engine') {
+  constructor(
+    workspacePath: string,
+    serverName: string = 'context-engine',
+    options?: { enableWatcher?: boolean; watchDebounceMs?: number }
+  ) {
     this.workspacePath = workspacePath;
     this.serviceClient = new ContextServiceClient(workspacePath);
+    this.enableWatcher = options?.enableWatcher ?? false;
 
     this.server = new Server(
       {
@@ -53,6 +69,30 @@ export class ContextEngineMCPServer {
 
     this.setupHandlers();
     this.setupGracefulShutdown();
+
+    if (this.enableWatcher) {
+      this.fileWatcher = new FileWatcher(
+        workspacePath,
+        {
+          onBatch: async (changes) => {
+            // Ignore deletions for now; they can be handled by a full reindex if needed
+            const paths = changes
+              .filter((c) => c.type !== 'unlink')
+              .map((c) => c.path);
+            if (paths.length === 0) return;
+            try {
+              await this.serviceClient.indexFiles(paths);
+            } catch (error) {
+              console.error('[watcher] Incremental indexing failed:', error);
+            }
+          },
+        },
+        {
+          debounceMs: options?.watchDebounceMs ?? 500,
+        }
+      );
+      this.fileWatcher.start();
+    }
   }
 
   /**
@@ -68,6 +108,11 @@ export class ContextEngineMCPServer {
       try {
         // Clear caches
         this.serviceClient.clearCache();
+
+        // Stop watcher if running
+        if (this.fileWatcher) {
+          await this.fileWatcher.stop();
+        }
 
         // Close server connection
         await this.server.close();
@@ -105,6 +150,10 @@ export class ContextEngineMCPServer {
           getFileTool,
           getContextTool,
           enhancePromptTool,
+          indexStatusTool,
+          reindexWorkspaceTool,
+          clearIndexTool,
+          toolManifestTool,
         ],
       };
     });
@@ -123,6 +172,22 @@ export class ContextEngineMCPServer {
         switch (name) {
           case 'index_workspace':
             result = await handleIndexWorkspace(args as any, this.serviceClient);
+            break;
+
+          case 'reindex_workspace':
+            result = await handleReindexWorkspace(args as any, this.serviceClient);
+            break;
+
+          case 'clear_index':
+            result = await handleClearIndex(args as any, this.serviceClient);
+            break;
+
+          case 'index_status':
+            result = await handleIndexStatus(args as any, this.serviceClient);
+            break;
+
+          case 'tool_manifest':
+            result = await handleToolManifest(args as any, this.serviceClient);
             break;
 
           case 'semantic_search':
@@ -184,9 +249,14 @@ export class ContextEngineMCPServer {
     console.error('='.repeat(60));
     console.error(`Workspace: ${this.workspacePath}`);
     console.error('Transport: stdio');
+    console.error(`Watcher: ${this.enableWatcher ? 'enabled' : 'disabled'}`);
     console.error('');
     console.error('Available tools:');
     console.error('  - index_workspace: Index workspace files for semantic search');
+    console.error('  - reindex_workspace: Clear and rebuild the workspace index');
+    console.error('  - clear_index: Remove saved index state and caches');
+    console.error('  - index_status: View current index health and metadata');
+    console.error('  - tool_manifest: Discover available tools and capabilities');
     console.error('  - semantic_search: Find code by semantic meaning');
     console.error('  - get_file: Retrieve file contents');
     console.error('  - get_context_for_prompt: Get enhanced context for prompts');
@@ -207,4 +277,3 @@ export class ContextEngineMCPServer {
     return this.workspacePath;
   }
 }
-
