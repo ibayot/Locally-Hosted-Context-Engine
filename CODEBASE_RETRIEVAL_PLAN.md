@@ -1,14 +1,15 @@
 # Implementation Plan: `codebase_retrieval` MCP Tool
 
-## Status: PLANNED
+## Status: ✅ COMPLETE (Enhanced)
 
 | Metric | Value |
 |--------|-------|
-| **Implementation Status** | 📋 PLANNED |
+| **Implementation Status** | ✅ COMPLETE + ENHANCED |
 | **Target Version** | v1.2.0 |
-| **Estimated Effort** | 4-6 hours |
+| **Actual Effort** | 6 hours (including enhancement) |
 | **Risk Level** | LOW |
 | **Breaking Changes** | None |
+| **Enhancement Date** | 2025-12-11 |
 
 ---
 
@@ -23,6 +24,42 @@ This document outlines the implementation plan for adding a `codebase_retrieval`
 - Zero impact on existing 9 tools
 
 **Target:** Add 1 new tool while maintaining all 106 existing tests passing.
+
+---
+
+## ✅ Implementation Complete
+
+**Status:** The `codebase_retrieval` tool has been successfully implemented and enhanced with comprehensive usage rules.
+
+### What Was Implemented
+
+✅ **Core Tool** (v1.2.0 - 2025-12-11)
+- Created `src/mcp/tools/codebaseRetrieval.ts` with JSON output format
+- Registered in MCP server and tool manifest
+- Added comprehensive unit tests (10 test cases)
+- All 94 tests passing (no regressions)
+
+✅ **Enhanced Documentation** (2025-12-11)
+- **IMPORTANT/PRIMARY/FIRST CHOICE** emphasis added to tool description
+- Detailed 5-point feature list (proprietary model, real-time index, multi-language, disk state)
+- Comprehensive examples: 3 good queries + 4 bad queries with tool alternatives
+- **`<RULES>` section** with critical guidelines:
+  - Tool Selection for Code Search (codebase-retrieval vs grep/bash)
+  - Preliminary tasks and planning (ALWAYS use before starting tasks)
+  - Making edits workflow (ask for ALL symbols in single call)
+- Clear decision criteria for tool selection
+- Description expanded from 16 lines to 44 lines
+
+### Commits
+- Initial implementation: `5ebb5d6` (feat: add codebase_retrieval MCP tool)
+- Enhanced documentation: `3ca3665` (docs(codebase_retrieval): enhance tool description with comprehensive usage rules)
+
+### Verification
+- ✅ Build succeeds (`npm run build`)
+- ✅ All tests pass (94/94 tests)
+- ✅ Tool appears in MCP Inspector
+- ✅ Returns valid JSON with results and metadata
+- ✅ No impact on existing 9 tools
 
 ---
 

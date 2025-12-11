@@ -23,6 +23,21 @@ All notable changes to the Context Engine MCP Server will be documented in this 
 - Manifest now advertises policy capability and the new tool.
 - Documentation updated to list the new primary search tool.
 
+### Enhanced
+- **`codebase_retrieval` tool description with comprehensive usage rules**:
+  - Added **IMPORTANT/PRIMARY/FIRST CHOICE** emphasis positioning tool as the primary codebase search tool
+  - Included detailed 5-point feature list (proprietary retrieval/embedding model, real-time index, multi-language support, disk state only)
+  - Added comprehensive examples section:
+    - 3 good query examples ("Where is the function that handles user authentication?", etc.)
+    - 4 bad query examples with recommended alternative tools (grep, file view)
+  - Added **`<RULES>` section** with critical usage guidelines:
+    - **Tool Selection for Code Search**: CRITICAL rules on when to use codebase-retrieval vs grep/bash commands
+    - **Preliminary tasks and planning**: ALWAYS use codebase-retrieval before starting any task
+    - **Making edits workflow**: ALWAYS call codebase-retrieval before editing, ask for ALL symbols in a single call
+  - Provided clear decision criteria for tool selection (semantic understanding vs exact string matching)
+  - Expanded embedded documentation from 16 lines to 44 lines
+  - This enhancement guides AI agents to correctly use the tool as the primary choice for semantic code understanding
+
 ## [1.0.0] - 2024-12-10
 
 ### Added
