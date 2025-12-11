@@ -23,6 +23,7 @@ const manifest = {
   ],
   tools: [
     'index_workspace',
+    'codebase_retrieval',
     'semantic_search',
     'get_file',
     'get_context_for_prompt',

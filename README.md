@@ -45,20 +45,21 @@ This implementation follows a clean 5-layer architecture as outlined in `plan.md
 
 ## Features
 
-### MCP Tools (9 tools)
+### MCP Tools (10 tools)
 
 #### Core Tools
 1. **`index_workspace(force)`** - Index workspace files for semantic search
-2. **`semantic_search(query, top_k)`** - Semantic code search across the codebase
-3. **`get_file(path)`** - Retrieve complete file contents
-4. **`get_context_for_prompt(query)`** - Get relevant context for prompt enhancement (primary tool)
-5. **`enhance_prompt(prompt, max_files, use_ai)`** - Transform simple prompts into detailed, structured prompts with codebase context
+2. **`codebase_retrieval(query, top_k)`** - PRIMARY semantic search, JSON output for programmatic use
+3. **`semantic_search(query, top_k)`** - Semantic code search across the codebase (markdown output)
+4. **`get_file(path)`** - Retrieve complete file contents
+5. **`get_context_for_prompt(query)`** - Get relevant context for prompt enhancement (primary tool)
+6. **`enhance_prompt(prompt, max_files, use_ai)`** - Transform simple prompts into detailed, structured prompts with codebase context
 
 #### Management Tools (New in v1.1.0)
-6. **`index_status()`** - View index health metadata (status, fileCount, lastIndexed, isStale)
-7. **`reindex_workspace()`** - Clear and rebuild the entire index
-8. **`clear_index()`** - Remove index state without rebuilding
-9. **`tool_manifest()`** - Capability discovery for agents (lists all available tools)
+7. **`index_status()`** - View index health metadata (status, fileCount, lastIndexed, isStale)
+8. **`reindex_workspace()`** - Clear and rebuild the entire index
+9. **`clear_index()`** - Remove index state without rebuilding
+10. **`tool_manifest()`** - Capability discovery for agents (lists all available tools)
 
 ### Key Characteristics
 
@@ -301,4 +302,3 @@ npm run inspector
 ## License
 
 MIT
-

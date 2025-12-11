@@ -36,6 +36,7 @@ import {
   handleClearIndex,
 } from './tools/lifecycle.js';
 import { toolManifestTool, handleToolManifest } from './tools/manifest.js';
+import { codebaseRetrievalTool, handleCodebaseRetrieval } from './tools/codebaseRetrieval.js';
 import { FileWatcher } from '../watcher/index.js';
 
 export class ContextEngineMCPServer {
@@ -146,6 +147,7 @@ export class ContextEngineMCPServer {
       return {
         tools: [
           indexWorkspaceTool,
+          codebaseRetrievalTool,
           semanticSearchTool,
           getFileTool,
           getContextTool,
@@ -188,6 +190,10 @@ export class ContextEngineMCPServer {
 
           case 'tool_manifest':
             result = await handleToolManifest(args as any, this.serviceClient);
+            break;
+
+          case 'codebase_retrieval':
+            result = await handleCodebaseRetrieval(args as any, this.serviceClient);
             break;
 
           case 'semantic_search':

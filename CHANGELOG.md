@@ -2,6 +2,13 @@
 
 All notable changes to the Context Engine MCP Server will be documented in this file.
 
+## [1.2.0] - 2025-12-11
+
+### Added
+- `codebase_retrieval` tool: primary semantic search with JSON output for programmatic consumers; includes workspace/index metadata.
+- Manifest now advertises policy capability and the new tool.
+- Documentation updated to list the new primary search tool.
+
 ## [1.0.0] - 2024-12-10
 
 ### Added
@@ -158,4 +165,3 @@ As outlined in plan.md, these can be added without architectural changes:
 
 - **1.1.0** - MCP compliance, automation, background indexing, and policy features
 - **1.0.0** - Initial release with core functionality
-
