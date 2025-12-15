@@ -103,6 +103,32 @@ describe('PlanPersistenceService', () => {
       expect(metadata?.tags).toContain('backend');
       expect(metadata?.tags).toContain('api');
     });
+
+    it('should handle plan with undefined goal', async () => {
+      const plan = createTestPlan('plan_no_goal');
+      // @ts-expect-error - Testing undefined goal scenario
+      plan.goal = undefined;
+
+      const result = await service.savePlan(plan);
+
+      expect(result.success).toBe(true);
+      expect(result.plan_id).toBe('plan_no_goal');
+
+      const metadata = await service.getPlanMetadata('plan_no_goal');
+      expect(metadata?.goal).toBe('No goal specified');
+      expect(metadata?.name).toMatch(/^Plan \d{4}-\d{2}-\d{2}$/); // Generated name from date
+    });
+
+    it('should handle plan with undefined id', async () => {
+      const plan = createTestPlan();
+      // @ts-expect-error - Testing undefined id scenario
+      plan.id = undefined;
+
+      const result = await service.savePlan(plan);
+
+      expect(result.success).toBe(true);
+      expect(result.plan_id).toMatch(/^plan_\d+$/); // Generated ID
+    });
   });
 
   describe('loadPlan', () => {
