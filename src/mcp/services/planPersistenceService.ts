@@ -64,7 +64,12 @@ export class PlanPersistenceService {
   /**
    * Get the file path for a plan
    */
-  private getPlanFilePath(planId: string): string {
+  private getPlanFilePath(planId: string | undefined | null): string {
+    // Handle undefined/null planId
+    if (!planId || typeof planId !== 'string') {
+      const fallbackId = `plan_${Date.now()}`;
+      return path.join(this.plansDir, `${fallbackId}${PLAN_FILE_EXTENSION}`);
+    }
     // Sanitize plan ID for use as filename
     const safeId = planId.replace(/[^a-zA-Z0-9_-]/g, '_');
     return path.join(this.plansDir, `${safeId}${PLAN_FILE_EXTENSION}`);
@@ -133,13 +138,16 @@ export class PlanPersistenceService {
       await this.ensureDirectory();
       const index = await this.loadIndex();
 
+      // Ensure plan has an ID (generate one if missing)
+      const planId = plan.id || `plan_${Date.now()}`;
+
       // Check if plan already exists
-      const existingIdx = index.plans.findIndex(p => p.id === plan.id);
+      const existingIdx = index.plans.findIndex(p => p.id === planId);
       if (existingIdx >= 0 && !options.overwrite) {
         return {
           success: false,
-          error: `Plan with ID ${plan.id} already exists. Use overwrite: true to replace.`,
-          plan_id: plan.id,
+          error: `Plan with ID ${planId} already exists. Use overwrite: true to replace.`,
+          plan_id: planId,
         };
       }
 
@@ -151,15 +159,15 @@ export class PlanPersistenceService {
 
       // Create metadata
       const metadata: PersistedPlanMetadata = {
-        id: plan.id,
+        id: planId,
         name,
-        goal: plan.goal,
+        goal: plan.goal || 'No goal specified',
         status: 'ready' as PlanStatus,
-        version: plan.version,
-        file_path: this.getPlanFilePath(plan.id),
+        version: plan.version || 1,
+        file_path: this.getPlanFilePath(planId),
         created_at: existingIdx >= 0 ? index.plans[existingIdx].created_at : new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        step_count: plan.steps.length,
+        step_count: plan.steps?.length || 0,
         tags: options.tags,
       };
 
@@ -176,14 +184,16 @@ export class PlanPersistenceService {
 
       return {
         success: true,
-        plan_id: plan.id,
+        plan_id: planId,
         file_path: metadata.file_path,
       };
     } catch (error) {
+      // Use the generated planId if available, otherwise fall back to plan.id
+      const errorPlanId = plan.id || `plan_${Date.now()}`;
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
-        plan_id: plan.id,
+        plan_id: errorPlanId,
       };
     }
   }
@@ -380,12 +390,22 @@ export class PlanPersistenceService {
   /**
    * Generate a plan name from the goal
    */
-  private generatePlanName(goal: string): string {
+  private generatePlanName(goal: string | undefined | null): string {
+    // Handle undefined/null goal
+    if (!goal || typeof goal !== 'string') {
+      return `Plan ${new Date().toISOString().slice(0, 10)}`;
+    }
+
     // Take first 50 chars, remove special chars, title case
     const cleaned = goal
       .substring(0, 50)
       .replace(/[^a-zA-Z0-9\s]/g, '')
       .trim();
+
+    // Return default name if cleaned string is empty
+    if (!cleaned) {
+      return `Plan ${new Date().toISOString().slice(0, 10)}`;
+    }
 
     // Title case
     return cleaned
@@ -400,15 +420,27 @@ export class PlanPersistenceService {
   private countFilesAffected(plan: EnhancedPlanOutput): number {
     const files = new Set<string>();
 
+    // Handle undefined/null steps array
+    if (!plan.steps || !Array.isArray(plan.steps)) {
+      return 0;
+    }
+
     for (const step of plan.steps) {
-      for (const file of step.files_to_modify) {
-        files.add(file.path);
+      // Handle undefined step properties
+      if (step.files_to_modify && Array.isArray(step.files_to_modify)) {
+        for (const file of step.files_to_modify) {
+          if (file?.path) files.add(file.path);
+        }
       }
-      for (const file of step.files_to_create) {
-        files.add(file.path);
+      if (step.files_to_create && Array.isArray(step.files_to_create)) {
+        for (const file of step.files_to_create) {
+          if (file?.path) files.add(file.path);
+        }
       }
-      for (const file of step.files_to_delete) {
-        files.add(file);
+      if (step.files_to_delete && Array.isArray(step.files_to_delete)) {
+        for (const file of step.files_to_delete) {
+          if (file) files.add(file);
+        }
       }
     }
 
