@@ -25,6 +25,11 @@ import {
   DependencyNode,
   DependencyEdge,
   PlanSummary,
+  StepExecutionResult,
+  GeneratedCodeChange,
+  ExecutePlanOptions,
+  ExecutePlanResult,
+  ExecutionProgress,
 } from '../types/planning.js';
 import {
   PLANNING_SYSTEM_PROMPT,
@@ -32,6 +37,8 @@ import {
   buildPlanningPrompt,
   buildRefinementPrompt,
   extractJsonFromResponse,
+  STEP_EXECUTION_SYSTEM_PROMPT,
+  buildStepExecutionPrompt,
 } from '../prompts/planning.js';
 
 // ============================================================================
@@ -925,6 +932,132 @@ export class PlanningService {
     if (steps.length <= 6) return '4-8 hours';
     if (steps.length <= 10) return '1-2 days';
     return '2+ days';
+  }
+
+  // ==========================================================================
+  // Step Execution
+  // ==========================================================================
+
+  /**
+   * Execute a single step from a plan, generating the required code changes
+   */
+  async executeStep(
+    plan: EnhancedPlanOutput,
+    stepNumber: number,
+    additionalContext?: string
+  ): Promise<StepExecutionResult> {
+    const startTime = Date.now();
+
+    console.error(`[PlanningService] Executing step ${stepNumber} of plan ${plan.id}`);
+
+    // Find the step
+    const step = plan.steps.find(s => s.step_number === stepNumber);
+    if (!step) {
+      return {
+        step_number: stepNumber,
+        success: false,
+        error: `Step ${stepNumber} not found in plan`,
+        duration_ms: Date.now() - startTime,
+      };
+    }
+
+    try {
+      // Get relevant context for the files involved in this step
+      const filePaths = [
+        ...step.files_to_modify.map(f => f.path),
+        ...step.files_to_create.map(f => f.path),
+      ];
+
+      // Build context query from step details
+      const contextQuery = `${step.title}: ${step.description}. Files: ${filePaths.join(', ')}`;
+      const context = await this.contextClient.getContextForPrompt(contextQuery, {
+        maxFiles: 10,
+        tokenBudget: 8000,
+        includeRelated: true,
+        minRelevance: 0.2,
+        includeSummaries: true,
+      });
+
+      const contextSummary = this.formatContextForPrompt(context);
+
+      // Build the execution prompt
+      const executionPrompt = buildStepExecutionPrompt(
+        {
+          step_number: step.step_number,
+          title: step.title,
+          description: step.description,
+          files_to_modify: step.files_to_modify,
+          files_to_create: step.files_to_create,
+          files_to_delete: step.files_to_delete,
+          acceptance_criteria: step.acceptance_criteria,
+        },
+        plan.goal,
+        contextSummary,
+        additionalContext
+      );
+
+      // Combine with system prompt
+      const fullPrompt = `${STEP_EXECUTION_SYSTEM_PROMPT}\n\n${executionPrompt}`;
+
+      // Call AI to generate the code
+      const response = await this.contextClient.searchAndAsk(contextQuery, fullPrompt);
+
+      // Parse the response
+      const jsonStr = extractJsonFromResponse(response);
+      if (!jsonStr) {
+        throw new Error('Failed to extract JSON from LLM response');
+      }
+
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (error) {
+        throw new Error(`Failed to parse execution response: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      // Validate and extract changes
+      const changes = this.validateGeneratedChanges(parsed.changes);
+
+      console.error(`[PlanningService] Step ${stepNumber} executed successfully with ${changes.length} changes`);
+
+      return {
+        step_number: stepNumber,
+        success: true,
+        generated_code: changes,
+        reasoning: String(parsed.reasoning || ''),
+        duration_ms: Date.now() - startTime,
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[PlanningService] Step ${stepNumber} execution failed: ${errorMessage}`);
+
+      return {
+        step_number: stepNumber,
+        success: false,
+        error: errorMessage,
+        duration_ms: Date.now() - startTime,
+      };
+    }
+  }
+
+  /**
+   * Validate and normalize generated code changes from AI response
+   */
+  private validateGeneratedChanges(changes: unknown): GeneratedCodeChange[] {
+    if (!Array.isArray(changes)) {
+      return [];
+    }
+
+    return changes.map((change: unknown) => {
+      const c = change as Record<string, unknown>;
+      return {
+        path: String(c.path || ''),
+        change_type: this.validateChangeType(c.change_type),
+        content: c.content != null ? String(c.content) : undefined,
+        diff: c.diff != null ? String(c.diff) : undefined,
+        explanation: String(c.explanation || ''),
+      };
+    }).filter(c => c.path.length > 0);
   }
 
   /**

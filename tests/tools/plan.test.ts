@@ -9,9 +9,11 @@ import {
   handleCreatePlan,
   handleRefinePlan,
   handleVisualizePlan,
+  handleExecutePlan,
   createPlanTool,
   refinePlanTool,
   visualizePlanTool,
+  executePlanTool,
 } from '../../src/mcp/tools/plan.js';
 import { EnhancedPlanOutput } from '../../src/mcp/types/planning.js';
 
@@ -194,6 +196,66 @@ describe('Planning MCP Tools', () => {
         expect(diagramType.enum).toContain('dependencies');
         expect(diagramType.enum).toContain('architecture');
         expect(diagramType.enum).toContain('gantt');
+      });
+    });
+  });
+
+  describe('execute_plan Tool', () => {
+    describe('Input Validation', () => {
+      it('should reject empty plan', async () => {
+        await expect(
+          handleExecutePlan({ plan: '' }, mockServiceClient)
+        ).rejects.toThrow(/plan is required/i);
+      });
+
+      it('should reject null plan', async () => {
+        await expect(
+          handleExecutePlan({ plan: null as any }, mockServiceClient)
+        ).rejects.toThrow(/plan is required/i);
+      });
+
+      it('should reject invalid JSON in plan', async () => {
+        await expect(
+          handleExecutePlan({ plan: 'not json' }, mockServiceClient)
+        ).rejects.toThrow(/valid JSON/i);
+      });
+
+      it('should reject single_step mode without step_number', async () => {
+        const validPlan = JSON.stringify({ id: 'test', version: 1, steps: [] });
+        await expect(
+          handleExecutePlan({ plan: validPlan, mode: 'single_step' }, mockServiceClient)
+        ).rejects.toThrow(/step_number is required/i);
+      });
+    });
+
+    describe('Tool Schema', () => {
+      it('should have correct name', () => {
+        expect(executePlanTool.name).toBe('execute_plan');
+      });
+
+      it('should have description', () => {
+        expect(executePlanTool.description).toBeDefined();
+        expect(executePlanTool.description.length).toBeGreaterThan(50);
+      });
+
+      it('should require plan parameter', () => {
+        expect(executePlanTool.inputSchema.required).toContain('plan');
+      });
+
+      it('should define mode enum', () => {
+        const mode = executePlanTool.inputSchema.properties.mode;
+        expect(mode.enum).toContain('single_step');
+        expect(mode.enum).toContain('all_ready');
+        expect(mode.enum).toContain('full_plan');
+      });
+
+      it('should define optional parameters', () => {
+        const props = executePlanTool.inputSchema.properties;
+        expect(props.step_number).toBeDefined();
+        expect(props.apply_changes).toBeDefined();
+        expect(props.max_steps).toBeDefined();
+        expect(props.stop_on_failure).toBeDefined();
+        expect(props.additional_context).toBeDefined();
       });
     });
   });

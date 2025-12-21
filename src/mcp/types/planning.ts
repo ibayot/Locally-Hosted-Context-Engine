@@ -881,3 +881,90 @@ export interface CompletePlanState {
   metadata: PersistedPlanMetadata;
 }
 
+// ============================================================================
+// Phase 3: Plan Execution Types
+// ============================================================================
+
+/**
+ * Execution mode for the execute_plan tool
+ */
+export type ExecutionMode = 'single_step' | 'all_ready' | 'full_plan';
+
+/**
+ * Result of executing a single step
+ */
+export interface StepExecutionResult {
+  /** Step number that was executed */
+  step_number: number;
+  /** Whether execution succeeded */
+  success: boolean;
+  /** Generated code or changes */
+  generated_code?: GeneratedCodeChange[];
+  /** Error message if failed */
+  error?: string;
+  /** Execution duration in milliseconds */
+  duration_ms: number;
+  /** AI reasoning for the changes */
+  reasoning?: string;
+}
+
+/**
+ * A generated code change from step execution
+ */
+export interface GeneratedCodeChange {
+  /** File path */
+  path: string;
+  /** Type of change */
+  change_type: FileChangeType;
+  /** The generated code content */
+  content?: string;
+  /** Diff for modifications (unified diff format) */
+  diff?: string;
+  /** Explanation of the change */
+  explanation: string;
+}
+
+/**
+ * Result of executing a plan (one or more steps)
+ */
+export interface ExecutePlanResult {
+  /** Whether the overall execution succeeded */
+  success: boolean;
+  /** Plan ID */
+  plan_id: string;
+  /** Results for each step executed */
+  step_results: StepExecutionResult[];
+  /** Steps that are now ready to execute */
+  next_ready_steps: number[];
+  /** Overall progress after execution */
+  progress: ExecutionProgress;
+  /** Error message if failed */
+  error?: string;
+  /** Total duration in milliseconds */
+  duration_ms: number;
+  /** Files that were applied (when apply_changes=true) */
+  files_applied?: string[];
+  /** Errors during file application */
+  apply_errors?: string[];
+  /** Backup files created before overwriting */
+  backups_created?: string[];
+}
+
+/**
+ * Options for plan execution
+ */
+export interface ExecutePlanOptions {
+  /** Execution mode */
+  mode: ExecutionMode;
+  /** Specific step to execute (for single_step mode) */
+  step_number?: number;
+  /** Whether to apply changes automatically (default: false - preview only) */
+  apply_changes?: boolean;
+  /** Maximum steps to execute in one call (for all_ready/full_plan modes) */
+  max_steps?: number;
+  /** Whether to stop on first failure (default: true) */
+  stop_on_failure?: boolean;
+  /** Additional context to provide to the AI */
+  additional_context?: string;
+}
+

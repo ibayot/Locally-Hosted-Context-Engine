@@ -252,3 +252,107 @@ export function extractJsonFromResponse(response: string): string | null {
   return null;
 }
 
+// ============================================================================
+// Step Execution System Prompt
+// ============================================================================
+
+/**
+ * System prompt for executing a single plan step
+ */
+export const STEP_EXECUTION_SYSTEM_PROMPT = `You are an expert software developer executing a specific step from an implementation plan.
+
+## Your Role
+- Generate the exact code changes needed to complete this step
+- Follow the plan's architecture and design decisions
+- Write clean, well-documented code
+- Ensure changes are minimal and focused on the step's requirements
+
+## Strict Rules
+- Output ONLY valid JSON matching the exact schema below
+- Generate complete, working code - no placeholders or TODOs
+- Follow existing code patterns and conventions from the codebase context
+- Include all necessary imports and dependencies
+
+## Output Schema
+You MUST return a JSON object with this exact structure:
+
+{
+  "success": true,
+  "reasoning": "Brief explanation of the approach taken",
+  "changes": [
+    {
+      "path": "src/path/to/file.ts",
+      "change_type": "create|modify|delete",
+      "content": "Full file content for create, or null for delete",
+      "diff": "Unified diff format for modifications (optional)",
+      "explanation": "Why this change is needed"
+    }
+  ]
+}
+
+## Guidelines
+1. For new files: provide complete file content
+2. For modifications: provide the complete new file content
+3. For deletions: set content to null
+4. Keep explanations concise but informative
+5. Ensure code compiles and follows TypeScript/JavaScript best practices
+6. Include proper error handling
+7. Add JSDoc comments for public APIs`;
+
+/**
+ * Build the step execution prompt with step details and context
+ */
+export function buildStepExecutionPrompt(
+  step: {
+    step_number: number;
+    title: string;
+    description: string;
+    files_to_modify: Array<{ path: string; reason: string }>;
+    files_to_create: Array<{ path: string; reason: string }>;
+    files_to_delete: string[];
+    acceptance_criteria: string[];
+  },
+  planGoal: string,
+  contextSummary: string,
+  additionalContext?: string
+): string {
+  let prompt = `## Plan Goal
+${planGoal}
+
+## Current Step: Step ${step.step_number} - ${step.title}
+
+### Description
+${step.description}
+
+### Files to Modify
+${step.files_to_modify.length > 0
+  ? step.files_to_modify.map(f => `- ${f.path}: ${f.reason}`).join('\n')
+  : 'None'}
+
+### Files to Create
+${step.files_to_create.length > 0
+  ? step.files_to_create.map(f => `- ${f.path}: ${f.reason}`).join('\n')
+  : 'None'}
+
+### Files to Delete
+${step.files_to_delete.length > 0
+  ? step.files_to_delete.map(f => `- ${f}`).join('\n')
+  : 'None'}
+
+### Acceptance Criteria
+${step.acceptance_criteria.map(c => `- ${c}`).join('\n')}
+
+## Codebase Context
+${contextSummary}`;
+
+  if (additionalContext) {
+    prompt += `\n\n## Additional Context\n${additionalContext}`;
+  }
+
+  prompt += `\n\n## Instructions
+Generate the code changes needed to complete this step. Follow the existing code patterns and conventions.
+Return ONLY valid JSON matching the schema in your system prompt.`;
+
+  return prompt;
+}
+

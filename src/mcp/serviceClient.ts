@@ -199,6 +199,9 @@ const CHARS_PER_TOKEN = 4;
 /** Cache TTL in milliseconds (1 minute) */
 const CACHE_TTL_MS = 60000;
 
+/** Default timeout for AI API calls in milliseconds (2 minutes) */
+const DEFAULT_API_TIMEOUT_MS = 120000;
+
 /** State file name for persisting index state */
 const STATE_FILE_NAME = '.augment-context-state.json';
 
@@ -218,27 +221,53 @@ const MEMORIES_DIR = '.memories';
  * The Auggie SDK's DirectContext may not be thread-safe for concurrent
  * searchAndAsk calls. This queue ensures only one call runs at a time
  * while allowing other operations to continue.
+ *
+ * Includes timeout protection to prevent indefinite hangs on API calls.
  */
 class SearchQueue {
   private queue: Array<{
     execute: () => Promise<string>;
     resolve: (value: string) => void;
     reject: (error: Error) => void;
+    timeoutMs: number;
   }> = [];
   private running = false;
 
   /**
-   * Enqueue a searchAndAsk call for serialized execution
+   * Create a promise that resolves with a timeout
    */
-  async enqueue(fn: () => Promise<string>): Promise<string> {
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`${operation} timed out after ${timeoutMs}ms. Consider breaking down the query into smaller parts.`));
+      }, timeoutMs);
+
+      promise
+        .then((result) => {
+          clearTimeout(timeoutId);
+          resolve(result);
+        })
+        .catch((error) => {
+          clearTimeout(timeoutId);
+          reject(error);
+        });
+    });
+  }
+
+  /**
+   * Enqueue a searchAndAsk call for serialized execution with timeout protection
+   * @param fn The function to execute
+   * @param timeoutMs Timeout in milliseconds (default: 120000 = 2 minutes)
+   */
+  async enqueue(fn: () => Promise<string>, timeoutMs: number = DEFAULT_API_TIMEOUT_MS): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      this.queue.push({ execute: fn, resolve, reject });
+      this.queue.push({ execute: fn, resolve, reject, timeoutMs });
       this.processQueue();
     });
   }
 
   /**
-   * Process the queue, executing one call at a time
+   * Process the queue, executing one call at a time with timeout protection
    */
   private async processQueue(): Promise<void> {
     if (this.running || this.queue.length === 0) {
@@ -249,9 +278,16 @@ class SearchQueue {
     const item = this.queue.shift()!;
 
     try {
-      const result = await item.execute();
+      // Wrap the execution with timeout protection
+      const result = await this.withTimeout(
+        item.execute(),
+        item.timeoutMs,
+        'AI API request'
+      );
       item.resolve(result);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[SearchQueue] Request failed: ${errorMessage}`);
       item.reject(error instanceof Error ? error : new Error(String(error)));
     } finally {
       this.running = false;
@@ -274,6 +310,18 @@ class SearchQueue {
    */
   get isRunning(): boolean {
     return this.running;
+  }
+
+  /**
+   * Clear all pending items in the queue (for cleanup/shutdown)
+   */
+  clearPending(): number {
+    const count = this.queue.length;
+    for (const item of this.queue) {
+      item.reject(new Error('Queue cleared'));
+    }
+    this.queue = [];
+    return count;
   }
 }
 

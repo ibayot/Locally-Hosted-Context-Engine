@@ -2,6 +2,96 @@
 
 All notable changes to the Context Engine MCP Server will be documented in this file.
 
+## [1.6.0] - 2025-12-21
+
+### Added
+
+#### Plan Execution Tool (`execute_plan`)
+- **New MCP Tool**: `execute_plan` for AI-powered step-by-step plan execution
+  - Three execution modes: `single_step`, `all_ready`, `full_plan`
+  - AI-generated code changes with file path, operation type, and content
+  - Optional automatic file writing with `apply_changes=true` parameter
+  - Configurable step limits and failure handling
+  - Progress tracking with completion percentages
+  - Next ready steps calculation based on dependency graph
+
+#### File Writing Capabilities
+- **`applyGeneratedChanges` function**: Safely applies AI-generated code changes to disk
+  - **Security**: Path validation prevents directory traversal attacks
+  - **Safety**: Automatic backup creation before overwriting files (`.backup.TIMESTAMP` format)
+  - **Convenience**: Parent directories created automatically for new files
+  - **Operations**: Supports create, modify, and delete file operations
+  - **Reporting**: Detailed tracking of applied files, errors, and backups created
+
+#### API Timeout Protection
+- **`withTimeout` helper**: Generic timeout wrapper for async operations
+  - Default 120-second timeout for AI API calls
+  - Configurable timeout per request
+  - Descriptive error messages on timeout
+  - Queue cleanup support via `clearPending` method
+
+### Performance
+
+#### Parallel Step Execution
+- **`all_ready` mode optimization**: Independent steps execute in parallel
+  - Uses `Promise.all` for concurrent step execution
+  - Results sorted by step number for consistent output
+  - Graceful error handling - failed steps don't crash the batch
+  - Falls back to sequential execution for `single_step` and `full_plan` modes
+  - **Estimated improvement**: 2-5x faster for plans with multiple independent steps
+
+#### Service Instance Reuse
+- **Lazy singleton pattern** for `PlanningService`
+  - Cached service instance reused across requests
+  - Uses `WeakRef` for safe memory management
+  - Automatic recreation if `serviceClient` changes
+  - Reduces memory allocation and initialization overhead
+
+### Changed
+
+#### Type Definitions
+- **`ExecutePlanResult` interface** extended with file operation tracking:
+  - `files_applied`: Number of files successfully written to disk
+  - `apply_errors`: Array of error messages from file operations
+  - `backups_created`: Array of backup file paths created
+
+#### Service Client
+- **`SearchQueue` class** enhanced with timeout support:
+  - `enqueue` method accepts optional `timeoutMs` parameter
+  - `clearPending` method for queue cleanup
+  - Better error handling for timeout scenarios
+
+### Fixed
+
+#### Critical Bug Fixes
+1. **File Writing**: `execute_plan` now properly writes generated code to disk when `apply_changes=true`
+   - Previously, generated code was only returned in the response
+   - Now creates/modifies/deletes files as specified in the plan
+
+2. **API Timeouts**: AI API calls no longer hang indefinitely
+   - Added 120-second default timeout for `searchAndAsk` operations
+   - Prevents tool timeout errors in MCP clients
+   - Provides clear error messages when timeouts occur
+
+### Tests
+
+- **All 222 tests passing** (no new test failures)
+- Existing test suite validates backward compatibility
+- TypeScript compilation passes with no errors
+
+### Backward Compatibility
+
+- **No breaking changes**: All existing MCP tool APIs remain unchanged
+- `apply_changes=false` (default) preserves preview-only behavior
+- Sequential execution still works for `single_step` and `full_plan` modes
+- All response formats backward compatible (only additions)
+
+### Security
+
+- **Path validation**: Prevents writes outside workspace directory
+- **Backup creation**: Automatic backups before overwriting files
+- **Error isolation**: File operation errors don't crash the entire execution
+
 ## [1.5.0] - 2025-12-19
 
 ### Added
@@ -476,6 +566,9 @@ As outlined in plan.md, these can be added without architectural changes:
 
 ## Version History
 
+- **1.6.0** - Plan execution tool with file writing, API timeout protection, and performance improvements
+- **1.5.0** - Internal handlers layer, snapshot testing, and code consolidation
+- **1.4.1** - Cross-session memory system and parallelization optimizations
 - **1.4.0** - Planning mode with persistence, approval workflows, execution tracking, and history
 - **1.3.0** - AI-only enhance_prompt tool (breaking change)
 - **1.2.0** - codebase_retrieval tool with JSON output

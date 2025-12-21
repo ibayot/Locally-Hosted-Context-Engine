@@ -41,9 +41,11 @@ import {
   createPlanTool,
   refinePlanTool,
   visualizePlanTool,
+  executePlanTool,
   handleCreatePlan,
   handleRefinePlan,
   handleVisualizePlan,
+  handleExecutePlan,
 } from './tools/plan.js';
 import {
   addMemoryTool,
@@ -197,6 +199,7 @@ export class ContextEngineMCPServer {
           createPlanTool,
           refinePlanTool,
           visualizePlanTool,
+          executePlanTool,
           // Plan management tools (Phase 2)
           ...planManagementTools,
         ],
@@ -275,6 +278,10 @@ export class ContextEngineMCPServer {
 
           case 'visualize_plan':
             result = await handleVisualizePlan(args as any, this.serviceClient);
+            break;
+
+          case 'execute_plan':
+            result = await handleExecutePlan(args as any, this.serviceClient);
             break;
 
           // Plan management tools (Phase 2)
