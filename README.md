@@ -45,7 +45,7 @@ This implementation follows a clean 5-layer architecture as outlined in `plan.md
 
 ## Features
 
-### MCP Tools (28 tools available)
+### MCP Tools (29 tools available)
 
 #### Core Context Tools
 1. **`index_workspace(force?)`** - Index workspace files for semantic search
@@ -85,70 +85,78 @@ This implementation follows a clean 5-layer architecture as outlined in `plan.md
 13. **`visualize_plan(plan, diagram_type?)`** - Generate visual representations (Mermaid diagrams)
     - `plan`: JSON string of the plan
     - `diagram_type` (optional): 'dependencies', 'architecture', or 'gantt' (default: 'dependencies')
+14. **`execute_plan(plan, mode?, step_number?, apply_changes?, max_steps?, stop_on_failure?, additional_context?)`** - Execute plan steps with AI-powered code generation
+    - `plan`: JSON string of the plan (from create_plan output)
+    - `mode` (optional): Execution mode - 'single_step', 'all_ready', or 'full_plan' (default: single_step)
+    - `step_number` (optional): Step number to execute (required for single_step mode)
+    - `apply_changes` (optional): Apply changes to files (default: false - preview only)
+    - `max_steps` (optional): Maximum steps to execute in one call (default: 5)
+    - `stop_on_failure` (optional): Stop on first failure (default: true)
+    - `additional_context` (optional): Additional context for AI code generation
 
 #### Plan Persistence Tools (v1.4.0)
-14. **`save_plan(plan, name?, tags?, overwrite?)`** - Save plans to persistent storage
+15. **`save_plan(plan, name?, tags?, overwrite?)`** - Save plans to persistent storage
     - `plan`: JSON string of EnhancedPlanOutput
     - `name` (optional): Custom name for the plan
     - `tags` (optional): Array of tags for organization
     - `overwrite` (optional): Overwrite existing plan with same ID
-15. **`load_plan(plan_id)`** - Load previously saved plans
+16. **`load_plan(plan_id)`** - Load previously saved plans
     - `plan_id`: ID of the plan to load
-16. **`list_plans(status?, tags?, limit?)`** - List saved plans with filtering
+17. **`list_plans(status?, tags?, limit?)`** - List saved plans with filtering
     - `status` (optional): Filter by status ('ready', 'approved', 'executing', 'completed', 'failed')
     - `tags` (optional): Filter by tags
     - `limit` (optional): Maximum number of plans to return
-17. **`delete_plan(plan_id)`** - Delete saved plans from storage
+18. **`delete_plan(plan_id)`** - Delete saved plans from storage
     - `plan_id`: ID of the plan to delete
 
 #### Approval Workflow Tools (v1.4.0)
-18. **`request_approval(plan_id, step_numbers?)`** - Create approval requests for plans or specific steps
+19. **`request_approval(plan_id, step_numbers?)`** - Create approval requests for plans or specific steps
     - `plan_id`: ID of the plan
     - `step_numbers` (optional): Specific steps to approve (omit for full plan approval)
-19. **`respond_approval(request_id, action, comments?)`** - Respond to approval requests
+20. **`respond_approval(request_id, action, comments?)`** - Respond to approval requests
     - `request_id`: ID of the approval request
     - `action`: 'approve', 'reject', or 'request_changes'
     - `comments` (optional): Comments or feedback
 
 #### Execution Tracking Tools (v1.4.0)
-20. **`start_step(plan_id, step_number)`** - Mark a step as in-progress
+21. **`start_step(plan_id, step_number)`** - Mark a step as in-progress
     - `plan_id`: ID of the plan
     - `step_number`: Step number to start
-21. **`complete_step(plan_id, step_number, notes?, files_modified?)`** - Mark a step as completed
+22. **`complete_step(plan_id, step_number, notes?, files_modified?)`** - Mark a step as completed
     - `plan_id`: ID of the plan
     - `step_number`: Step number to complete
     - `notes` (optional): Completion notes
     - `files_modified` (optional): Array of files actually modified
-22. **`fail_step(plan_id, step_number, error, retry?, skip?, skip_dependents?)`** - Mark a step as failed
+23. **`fail_step(plan_id, step_number, error, retry?, skip?, skip_dependents?)`** - Mark a step as failed
     - `plan_id`: ID of the plan
     - `step_number`: Step number that failed
     - `error`: Error message or reason
     - `retry` (optional): Whether to retry the step
     - `skip` (optional): Whether to skip the step
     - `skip_dependents` (optional): Whether to skip dependent steps
-23. **`view_progress(plan_id)`** - View execution progress and statistics
+24. **`view_progress(plan_id)`** - View execution progress and statistics
     - `plan_id`: ID of the plan
 
 #### History & Versioning Tools (v1.4.0)
-24. **`view_history(plan_id, limit?, include_plans?)`** - View version history of a plan
+25. **`view_history(plan_id, limit?, include_plans?)`** - View version history of a plan
     - `plan_id`: ID of the plan
     - `limit` (optional): Number of versions to retrieve
     - `include_plans` (optional): Include full plan content in each version
-25. **`compare_plan_versions(plan_id, from_version, to_version)`** - Generate diff between versions
+26. **`compare_plan_versions(plan_id, from_version, to_version)`** - Generate diff between versions
     - `plan_id`: ID of the plan
     - `from_version`: Starting version number
     - `to_version`: Ending version number
-26. **`rollback_plan(plan_id, version, reason?)`** - Rollback to a previous plan version
+27. **`rollback_plan(plan_id, version, reason?)`** - Rollback to a previous plan version
     - `plan_id`: ID of the plan
     - `version`: Version number to rollback to
     - `reason` (optional): Reason for rollback
 
 #### Memory Tools (v1.4.1)
-27. **`add_memory(category, content, title?)`** - Store persistent memories for future sessions
+28. **`add_memory(category, content, title?)`** - Store persistent memories for future sessions
     - `category`: 'preferences', 'decisions', or 'facts'
     - `content`: The memory content to store (max 5000 characters)
     - `title` (optional): Title for the memory
-28. **`list_memories(category?)`** - List all stored memories
+29. **`list_memories(category?)`** - List all stored memories
     - `category` (optional): Filter to a specific category
 
 ### Key Characteristics
