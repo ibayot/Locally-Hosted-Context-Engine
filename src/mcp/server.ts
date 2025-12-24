@@ -70,6 +70,8 @@ import {
   handleComparePlanVersions,
   handleRollbackPlan,
 } from './tools/planManagement.js';
+import { reviewChangesTool, handleReviewChanges } from './tools/codeReview.js';
+import { reviewGitDiffTool, handleReviewGitDiff } from './tools/gitReview.js';
 import { FileWatcher } from '../watcher/index.js';
 
 export class ContextEngineMCPServer {
@@ -202,6 +204,9 @@ export class ContextEngineMCPServer {
           executePlanTool,
           // Plan management tools (Phase 2)
           ...planManagementTools,
+          // Code Review tools (v1.5.0)
+          reviewChangesTool,
+          reviewGitDiffTool,
         ],
       };
     });
@@ -337,6 +342,15 @@ export class ContextEngineMCPServer {
             result = await handleRollbackPlan(args as Record<string, unknown>);
             break;
 
+          // Code Review tools (v1.5.0)
+          case 'review_changes':
+            result = await handleReviewChanges(args as any, this.serviceClient);
+            break;
+
+          case 'review_git_diff':
+            result = await handleReviewGitDiff(args as any, this.serviceClient);
+            break;
+
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
@@ -382,7 +396,7 @@ export class ContextEngineMCPServer {
     console.error('Transport: stdio');
     console.error(`Watcher: ${this.enableWatcher ? 'enabled' : 'disabled'}`);
     console.error('');
-    console.error('Available tools (28 total):');
+    console.error('Available tools (29 total):');
     console.error('  Core Context:');
     console.error('    - index_workspace, codebase_retrieval, semantic_search');
     console.error('    - get_file, get_context_for_prompt, enhance_prompt');
@@ -396,6 +410,8 @@ export class ContextEngineMCPServer {
     console.error('    - request_approval, respond_approval');
     console.error('    - start_step, complete_step, fail_step, view_progress');
     console.error('    - view_history, compare_plan_versions, rollback_plan');
+    console.error('  Code Review (v1.5.0):');
+    console.error('    - review_changes');
     console.error('');
     console.error('Server ready. Waiting for requests...');
     console.error('='.repeat(60));
@@ -410,5 +426,13 @@ export class ContextEngineMCPServer {
    */
   getWorkspacePath(): string {
     return this.workspacePath;
+  }
+
+  /**
+   * Get the service client instance.
+   * Used by HTTP server to share the same service client.
+   */
+  getServiceClient(): ContextServiceClient {
+    return this.serviceClient;
   }
 }

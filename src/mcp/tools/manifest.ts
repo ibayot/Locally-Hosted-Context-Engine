@@ -25,6 +25,7 @@ const manifest = {
     'approval_workflow',
     'execution_tracking',
     'version_history',
+    'code_review',
   ],
   tools: [
     // Core Context Tools
@@ -60,6 +61,8 @@ const manifest = {
     'view_history',
     'compare_plan_versions',
     'rollback_plan',
+    // Code Review Tools (v1.5.0)
+    'review_changes',
   ],
   features: {
     planning: {
@@ -105,6 +108,21 @@ const manifest = {
         'Snapshot testing infrastructure for regression checks',
         'Reduced code duplication (~100 lines in enhance.ts)',
         'Tool inventory generator and documentation',
+      ],
+    },
+    code_review: {
+      description: 'AI-powered code review with structured output and confidence scoring',
+      version: '1.5.0',
+      tools: ['review_changes', 'review_git_diff'],
+      features: [
+        'Structured output schema (Codex-style findings)',
+        'Confidence scoring per finding and overall',
+        'Priority levels (P0-P3) with semantic meaning',
+        'Changed lines filter to reduce noise',
+        'Category-based analysis (correctness, security, performance, etc.)',
+        'Actionable fix suggestions',
+        'Git integration (automatic diff retrieval)',
+        'Support for staged, unstaged, branch, and commit diffs',
       ],
     },
   },
