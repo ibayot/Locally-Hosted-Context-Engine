@@ -163,6 +163,8 @@ export class PlanHistoryService {
         last_modified_at: new Date().toISOString(),
       };
       this.histories.set(plan.id, history);
+      // Touch the history first so it has an access time for LRU eviction
+      this.touchHistory(plan.id);
       // Check if we need to evict old histories
       this.evictIfNeeded();
     }
@@ -204,6 +206,8 @@ export class PlanHistoryService {
       history = this.loadHistory(planId);
       if (history) {
         this.histories.set(planId, history);
+        // Touch the history first so it has an access time for LRU eviction
+        this.touchHistory(planId);
         // Check if we need to evict old histories
         this.evictIfNeeded();
       }
@@ -211,7 +215,7 @@ export class PlanHistoryService {
 
     if (!history) return null;
 
-    // Update access time
+    // Update access time (for already-cached histories)
     this.touchHistory(planId);
 
     // Apply filters

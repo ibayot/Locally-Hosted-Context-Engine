@@ -233,10 +233,14 @@ export class ReactiveReviewService {
 
         console.error(`[ReactiveReviewService] Starting review session ${sessionId} for commit ${prMetadata.commit_hash.substring(0, 12)}`);
 
+        // Track if commit cache was enabled so we can clean up on error
+        let commitCacheEnabled = false;
+
         try {
             // Enable commit-aware caching
             if (config.commit_cache) {
                 this.contextClient.enableCommitCache(prMetadata.commit_hash);
+                commitCacheEnabled = true;
 
                 // Prefetch context for changed files
                 if (prMetadata.changed_files.length > 0) {
@@ -274,6 +278,10 @@ export class ReactiveReviewService {
 
             return session;
         } catch (error) {
+            // Clean up commit cache if it was enabled
+            if (commitCacheEnabled) {
+                this.contextClient.disableCommitCache();
+            }
             session.status = 'failed';
             session.error = error instanceof Error ? error.message : String(error);
             session.updated_at = new Date().toISOString();
@@ -319,15 +327,15 @@ export class ReactiveReviewService {
             session.status = allSucceeded ? 'completed' : 'failed';
             session.updated_at = new Date().toISOString();
 
-            // Clean up
-            this.contextClient.disableCommitCache();
-
             return results;
         } catch (error) {
             session.status = 'failed';
             session.error = error instanceof Error ? error.message : String(error);
             session.updated_at = new Date().toISOString();
             throw error;
+        } finally {
+            // Always clean up commit cache, whether success or failure
+            this.contextClient.disableCommitCache();
         }
     }
 

@@ -138,6 +138,7 @@ export class ExecutionTrackingService {
   /**
    * Clean up expired execution states.
    * Removes states that have been in terminal status for longer than TTL.
+   * Also cleans up orphaned entries in abortedPlans set.
    */
   cleanupExpiredStates(): number {
     const now = Date.now();
@@ -176,6 +177,15 @@ export class ExecutionTrackingService {
         this.executionStates.delete(terminalStates[i].id);
         this.abortedPlans.delete(terminalStates[i].id);
         cleanedCount++;
+      }
+    }
+
+    // Third pass: clean up orphaned entries in abortedPlans
+    // (entries that no longer have corresponding execution state)
+    for (const planId of this.abortedPlans) {
+      if (!this.executionStates.has(planId)) {
+        this.abortedPlans.delete(planId);
+        // Don't increment cleanedCount since this is just an orphaned flag, not a state
       }
     }
 
@@ -719,10 +729,12 @@ export class ExecutionTrackingService {
     this.startStep(planId, stepNumber);
 
     const executeWithRetry = async (): Promise<StepExecutionResult> => {
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
       try {
-        // Create timeout promise
+        // Create timeout promise with clearable timer
         const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
+          timeoutId = setTimeout(() => {
             reject(new Error(`Step ${stepNumber} timed out after ${this.parallelOptions.step_timeout_ms}ms`));
           }, this.parallelOptions.step_timeout_ms);
         });
@@ -732,6 +744,12 @@ export class ExecutionTrackingService {
           executor(planId, stepNumber),
           timeoutPromise,
         ]);
+
+        // Clear timeout since execution completed before timeout
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
 
         const duration = Date.now() - startTime;
 
@@ -759,6 +777,12 @@ export class ExecutionTrackingService {
           };
         }
       } catch (error) {
+        // Clear timeout on error as well
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
         const duration = Date.now() - startTime;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
