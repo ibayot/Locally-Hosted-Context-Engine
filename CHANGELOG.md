@@ -2,6 +2,61 @@
 
 All notable changes to the Context Engine MCP Server will be documented in this file.
 
+## [1.7.1] - 2025-12-25
+
+### Fixed
+
+#### Memory Leak Fixes (P0 Critical)
+- **ReactiveReviewService**: Added session cleanup with configurable TTL and LRU eviction
+  - Sessions in terminal states cleaned up after TTL expires (default 1 hour)
+  - Max 100 sessions with automatic LRU eviction
+  - Periodic cleanup timer (5 minute interval)
+  - Commit cache now properly cleaned up on errors (try-finally pattern)
+
+- **ExecutionTrackingService**: Added automatic state cleanup
+  - Execution states cleaned up with 1 hour TTL for terminal states
+  - Max 100 execution states with LRU eviction
+  - Timer cleanup in `executeStepWithTimeout` - prevents timer accumulation
+  - Orphaned `abortedPlans` entries now cleaned up properly
+
+- **PlanHistoryService**: Added LRU eviction and version pruning
+  - Max 50 histories in memory with LRU eviction
+  - Max 20 versions per history with automatic pruning
+  - Fixed eviction order - `touchHistory()` now called before `evictIfNeeded()`
+
+#### Correctness Fixes
+- **Diff Parsing**: Fixed line number initialization in `parseHunkLines()`
+  - `oldLineNum` now correctly initialized from `oldStart`
+  - Code review line number references are now accurate
+
+#### Performance Improvements
+- **Indexing**: Changed `indexWorkspace()` to streaming batch approach
+  - Files read just-in-time per batch (10 files at a time)
+  - Memory usage now O(batch_size) not O(total_files)
+  - Large workspaces can be indexed without memory exhaustion
+
+- **FileWatcher**: Now respects `.gitignore` and `.contextignore` patterns
+  - Root-anchored patterns (e.g., `/.env`) now match correctly at workspace root
+  - Reduces unnecessary file change events
+
+### New Configuration Options
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REACTIVE_SESSION_TTL` | Session TTL in milliseconds | 3600000 (1 hour) |
+| `REACTIVE_MAX_SESSIONS` | Max sessions in memory | 100 |
+
+### New Methods
+- `ReactiveReviewService.cleanupExpiredSessions()` - Manual cleanup trigger
+- `ReactiveReviewService.stopCleanupTimer()` - Graceful shutdown
+- `ReactiveReviewService.getSessionCount()` - Monitoring
+- `ExecutionTrackingService.cleanupExpiredStates()` - Manual cleanup trigger
+- `ExecutionTrackingService.stopCleanupTimer()` - Graceful shutdown
+- `ExecutionTrackingService.getStateCount()` - Monitoring
+- `PlanHistoryService.getMemoryStats()` - Memory usage stats
+- `PlanHistoryService.clearMemoryCache()` - Force clear cache
+- `ContextServiceClient.getIgnorePatterns()` - Get loaded ignore patterns
+- `ContextServiceClient.getExcludedDirectories()` - Get excluded directories
+
 ## [1.7.0] - 2024-12-24
 
 ### Added
