@@ -15,6 +15,7 @@ import * as crypto from 'crypto';
 import { ContextServiceClient } from '../mcp/serviceClient.js';
 import { PlanningService } from '../mcp/services/planningService.js';
 import { ExecutionTrackingService, StepExecutor, StepExecutionResult } from '../mcp/services/executionTrackingService.js';
+import { PlanPersistenceService } from '../mcp/services/planPersistenceService.js';
 import { EnhancedPlanOutput } from '../mcp/types/planning.js';
 import {
     PRMetadata,
@@ -22,6 +23,10 @@ import {
     ReviewSessionStatus,
     ReviewStatus,
     getConfig,
+    calculateAdaptiveTimeout,
+    getCircuitBreakerConfig,
+    getChunkedProcessingConfig,
+    splitIntoChunks,
 } from './index.js';
 
 // ============================================================================
@@ -79,6 +84,9 @@ export class ReactiveReviewService {
     /** Last activity time for each session (for zombie detection) */
     private sessionLastActivity: Map<string, number> = new Map();
 
+    /** Adaptive timeouts calculated per session based on file count */
+    private sessionAdaptiveTimeouts: Map<string, number> = new Map();
+
     /** Cleanup timer for expired sessions */
     private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -88,13 +96,27 @@ export class ReactiveReviewService {
     /** Active session states that should be monitored for zombies */
     private static readonly ACTIVE_STATES: ReviewSessionStatus[] = ['initializing', 'analyzing', 'executing'];
 
+    /** Plan persistence service for saving/loading plans to disk */
+    private persistenceService: PlanPersistenceService | null = null;
+
     constructor(
         private contextClient: ContextServiceClient,
         private planningService: PlanningService,
-        private executionService: ExecutionTrackingService
+        private executionService: ExecutionTrackingService,
+        persistenceService?: PlanPersistenceService
     ) {
+        // Store persistence service if provided
+        this.persistenceService = persistenceService || null;
+
         // Start periodic cleanup (every 5 minutes)
         this.startCleanupTimer();
+    }
+
+    /**
+     * Set the plan persistence service (for lazy initialization).
+     */
+    setPersistenceService(service: PlanPersistenceService): void {
+        this.persistenceService = service;
     }
 
     /**
@@ -149,12 +171,16 @@ export class ReactiveReviewService {
                 const lastActivity = this.sessionLastActivity.get(sessionId) || this.sessionStartTimes.get(sessionId) || 0;
                 const inactiveTime = now - lastActivity;
 
-                if (inactiveTime > config.session_execution_timeout_ms) {
+                // Use adaptive timeout if available, otherwise fall back to config default
+                const adaptiveTimeout = this.sessionAdaptiveTimeouts.get(sessionId);
+                const effectiveTimeout = adaptiveTimeout || config.session_execution_timeout_ms;
+
+                if (inactiveTime > effectiveTimeout) {
                     session.status = 'failed';
-                    session.error = `Session execution timeout: no activity for ${Math.round(inactiveTime / 1000)}s`;
+                    session.error = `Session execution timeout: no activity for ${Math.round(inactiveTime / 1000)}s (limit: ${Math.round(effectiveTimeout / 1000)}s${adaptiveTimeout ? ' adaptive' : ''})`;
                     session.updated_at = new Date().toISOString();
                     zombieCount++;
-                    console.error(`[ReactiveReviewService] Session ${sessionId} timed out after ${Math.round(inactiveTime / 1000)}s of inactivity`);
+                    console.error(`[ReactiveReviewService] Session ${sessionId} timed out after ${Math.round(inactiveTime / 1000)}s of inactivity (adaptive timeout: ${adaptiveTimeout ? Math.round(adaptiveTimeout / 1000) + 's' : 'not set'})`);
 
                     // Clean up associated resources
                     this.contextClient.disableCommitCache();
@@ -214,6 +240,7 @@ export class ReactiveReviewService {
         this.sessionStartTimes.delete(sessionId);
         this.sessionTokensUsed.delete(sessionId);
         this.sessionLastActivity.delete(sessionId);
+        this.sessionAdaptiveTimeouts.delete(sessionId);
     }
 
     /**
@@ -225,6 +252,7 @@ export class ReactiveReviewService {
 
     /**
      * Check if a session is a zombie (stuck in active state with missing or orphaned plan).
+     * This is the synchronous version used in cleanup - doesn't attempt disk recovery.
      */
     private isZombieSession(sessionId: string, session: ReviewSession): boolean {
         // Only check active states
@@ -232,10 +260,59 @@ export class ReactiveReviewService {
             return false;
         }
 
+        // Check if the session has a plan_id but no corresponding plan in memory
+        // Note: This doesn't check disk - use isZombieSessionAsync for disk recovery
+        if (session.plan_id && !this.sessionPlans.has(sessionId)) {
+            // If we have persistence service, don't immediately mark as zombie
+            // The async version will attempt recovery
+            if (this.persistenceService) {
+                console.error(`[ReactiveReviewService] Session ${sessionId} has plan_id ${session.plan_id} but no plan in memory - may be recoverable from disk`);
+                return false; // Let async recovery handle it
+            }
+            console.error(`[ReactiveReviewService] Zombie detected: Session ${sessionId} has plan_id ${session.plan_id} but no plan in memory (no persistence service)`);
+            return true;
+        }
+
+        // Check if execution state exists for executing sessions
+        if (session.status === 'executing' && session.plan_id) {
+            const execState = this.executionService.getExecutionState(session.plan_id);
+            if (!execState) {
+                console.error(`[ReactiveReviewService] Zombie detected: Session ${sessionId} is executing but no execution state for plan ${session.plan_id}`);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Async version of zombie check that attempts to recover plan from disk.
+     * Returns true if session is a zombie that couldn't be recovered.
+     */
+    private async isZombieSessionAsync(sessionId: string, session: ReviewSession): Promise<boolean> {
+        // Only check active states
+        if (!ReactiveReviewService.ACTIVE_STATES.includes(session.status)) {
+            return false;
+        }
+
         // Check if the session has a plan_id but no corresponding plan
         if (session.plan_id && !this.sessionPlans.has(sessionId)) {
-            console.error(`[ReactiveReviewService] Zombie detected: Session ${sessionId} has plan_id ${session.plan_id} but no plan in memory`);
-            return true;
+            // Attempt to recover from disk
+            if (this.persistenceService) {
+                console.error(`[ReactiveReviewService] Attempting to recover plan ${session.plan_id} from disk for session ${sessionId}`);
+                const loadedPlan = await this.persistenceService.loadPlan(session.plan_id);
+                if (loadedPlan) {
+                    this.sessionPlans.set(sessionId, loadedPlan);
+                    console.error(`[ReactiveReviewService] Successfully recovered plan ${session.plan_id} from disk`);
+                    // Plan recovered, not a zombie
+                } else {
+                    console.error(`[ReactiveReviewService] Zombie detected: Session ${sessionId} has plan_id ${session.plan_id} but plan not found on disk`);
+                    return true;
+                }
+            } else {
+                console.error(`[ReactiveReviewService] Zombie detected: Session ${sessionId} has plan_id ${session.plan_id} but no plan in memory (no persistence service)`);
+                return true;
+            }
         }
 
         // Check if execution state exists for executing sessions
@@ -343,7 +420,26 @@ export class ReactiveReviewService {
             plan.id = planId;
             session.plan_id = planId;
             session.total_steps = plan.steps?.length || 0;
+
+            // Store plan in memory
             this.sessionPlans.set(sessionId, plan);
+
+            // Persist plan to disk if persistence service is available
+            if (this.persistenceService) {
+                const persistResult = await this.persistenceService.savePlan(plan, {
+                    name: `Review: ${prMetadata.commit_hash.substring(0, 12)}`,
+                    tags: ['reactive-review', `commit:${prMetadata.commit_hash.substring(0, 12)}`],
+                    overwrite: true, // Allow overwrite if plan ID already exists
+                });
+
+                if (!persistResult.success) {
+                    console.error(`[ReactiveReviewService] Warning: Failed to persist plan ${planId}: ${persistResult.error}`);
+                    // Continue anyway - plan is still in memory
+                } else {
+                    console.error(`[ReactiveReviewService] Plan ${planId} persisted to ${persistResult.file_path}`);
+                }
+            }
+
             this.touchSession(sessionId);
 
             // Initialize execution tracking
@@ -360,6 +456,21 @@ export class ReactiveReviewService {
                 throw new Error(`Execution state not found after initialization for plan ${planId}`);
             }
 
+            // Calculate adaptive timeout based on file count
+            const fileCount = prMetadata.changed_files.length;
+            const adaptiveTimeout = calculateAdaptiveTimeout({
+                fileCount,
+                avgTimePerFile: config.step_timeout_ms, // Use step timeout as baseline
+                bufferMultiplier: 1.5,
+                minTimeout: config.session_execution_timeout_ms,
+            });
+
+            console.error(`[ReactiveReviewService] Adaptive timeout calculated: ${Math.round(adaptiveTimeout/1000)}s for ${fileCount} files`);
+
+            // Configure circuit breaker for resilience
+            const cbConfig = getCircuitBreakerConfig();
+            this.executionService.configureCircuitBreaker(cbConfig);
+
             // Enable parallel execution if configured
             if (config.parallel_exec) {
                 this.executionService.enableParallelExecution({
@@ -374,7 +485,10 @@ export class ReactiveReviewService {
             session.updated_at = new Date().toISOString();
             this.touchSession(sessionId);
 
-            console.error(`[ReactiveReviewService] Review plan created with ${session.total_steps} steps, plan_id=${planId}`);
+            // Store adaptive timeout for session monitoring
+            this.sessionAdaptiveTimeouts.set(sessionId, adaptiveTimeout);
+
+            console.error(`[ReactiveReviewService] Review plan created with ${session.total_steps} steps, plan_id=${planId}, adaptive_timeout=${Math.round(adaptiveTimeout/1000)}s`);
 
             return session;
         } catch (error) {
@@ -405,11 +519,23 @@ export class ReactiveReviewService {
             throw new Error(`Session not found: ${sessionId}`);
         }
 
-        const plan = this.sessionPlans.get(sessionId);
+        let plan = this.sessionPlans.get(sessionId);
+
+        // Try to recover plan from disk if not in memory
+        if (!plan && session.plan_id && this.persistenceService) {
+            console.error(`[ReactiveReviewService] Plan not in memory, attempting to load from disk: ${session.plan_id}`);
+            const loadedPlan = await this.persistenceService.loadPlan(session.plan_id);
+            if (loadedPlan) {
+                plan = loadedPlan;
+                this.sessionPlans.set(sessionId, plan);
+                console.error(`[ReactiveReviewService] Successfully recovered plan ${session.plan_id} from disk`);
+            }
+        }
+
         if (!plan) {
             // Mark as failed if plan is missing (zombie prevention)
             session.status = 'failed';
-            session.error = 'Plan not found in memory - session may have become orphaned';
+            session.error = 'Plan not found in memory or on disk - session may have become orphaned';
             session.updated_at = new Date().toISOString();
             throw new Error(`No plan found for session: ${sessionId} (plan may have been evicted or failed to persist)`);
         }
@@ -467,14 +593,93 @@ export class ReactiveReviewService {
     }
 
     /**
+     * Execute review with chunked processing for large PRs.
+     * Splits files into chunks and processes them with delays between chunks.
+     *
+     * @param sessionId Session ID
+     * @param stepExecutor Custom step executor function
+     * @returns Array of execution results from all chunks
+     */
+    async executeReviewChunked(
+        sessionId: string,
+        stepExecutor: StepExecutor
+    ): Promise<StepExecutionResult[]> {
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+            throw new Error(`Session not found: ${sessionId}`);
+        }
+
+        const chunkedConfig = getChunkedProcessingConfig();
+        const fileCount = session.pr_metadata.changed_files.length;
+
+        // If chunking not needed, use regular execution
+        if (!chunkedConfig.enabled || fileCount <= chunkedConfig.chunkThreshold) {
+            console.error(`[ReactiveReviewService] Chunking not needed for ${fileCount} files (threshold: ${chunkedConfig.chunkThreshold})`);
+            return this.executeReview(sessionId, stepExecutor);
+        }
+
+        console.error(`[ReactiveReviewService] Executing chunked review: ${fileCount} files in chunks of ${chunkedConfig.chunkSize}`);
+
+        // Split files into chunks
+        const fileChunks = splitIntoChunks(session.pr_metadata.changed_files, chunkedConfig);
+        const allResults: StepExecutionResult[] = [];
+
+        for (let i = 0; i < fileChunks.length; i++) {
+            const chunk = fileChunks[i];
+            const isLastChunk = i === fileChunks.length - 1;
+
+            console.error(`[ReactiveReviewService] Processing chunk ${i + 1}/${fileChunks.length}: ${chunk.length} files`);
+
+            // Execute this chunk
+            const chunkResults = await this.executeReview(sessionId, stepExecutor);
+            allResults.push(...chunkResults);
+
+            // Add delay between chunks (unless it's the last one)
+            if (!isLastChunk && chunkedConfig.interChunkDelay > 0) {
+                console.error(`[ReactiveReviewService] Waiting ${chunkedConfig.interChunkDelay}ms before next chunk`);
+                await new Promise(resolve => setTimeout(resolve, chunkedConfig.interChunkDelay));
+            }
+
+            // Check if session failed during chunk execution
+            const updatedSession = this.sessions.get(sessionId);
+            if (updatedSession?.status === 'failed') {
+                console.error(`[ReactiveReviewService] Session failed during chunk ${i + 1}, stopping`);
+                break;
+            }
+        }
+
+        return allResults;
+    }
+
+    /**
+     * Get circuit breaker status from the execution service.
+     */
+    getCircuitBreakerStatus(): {
+        state: 'closed' | 'open' | 'half-open';
+        consecutiveFailures: number;
+        consecutiveSuccesses: number;
+        fallbackActive: boolean;
+    } {
+        return this.executionService.getCircuitBreakerState();
+    }
+
+    /**
+     * Reset the circuit breaker to initial state.
+     */
+    resetCircuitBreaker(): void {
+        this.executionService.resetCircuitBreaker();
+    }
+
+    /**
      * Get the current status of a review session.
      * Also checks for zombie state and updates session if detected.
+     * Note: This is the sync version - use getReviewStatusAsync for plan recovery.
      */
     getReviewStatus(sessionId: string): ReviewStatus | null {
         const session = this.sessions.get(sessionId);
         if (!session) return null;
 
-        // Check for zombie state when getting status
+        // Check for zombie state when getting status (sync version - no disk recovery)
         if (this.isZombieSession(sessionId, session)) {
             session.status = 'failed';
             session.error = 'Session became orphaned: plan or execution state missing';
@@ -482,6 +687,40 @@ export class ReactiveReviewService {
             console.error(`[ReactiveReviewService] Zombie session ${sessionId} detected during status check`);
         }
 
+        return this.buildReviewStatus(sessionId, session);
+    }
+
+    /**
+     * Get the current status of a review session with async plan recovery.
+     * Attempts to recover plans from disk before marking as zombie.
+     */
+    async getReviewStatusAsync(sessionId: string): Promise<ReviewStatus | null> {
+        const session = this.sessions.get(sessionId);
+        if (!session) return null;
+
+        // Check for zombie state with async recovery attempt
+        if (await this.isZombieSessionAsync(sessionId, session)) {
+            session.status = 'failed';
+            session.error = 'Session became orphaned: plan or execution state missing (recovery failed)';
+            session.updated_at = new Date().toISOString();
+            console.error(`[ReactiveReviewService] Zombie session ${sessionId} detected during async status check`);
+        }
+
+        return this.buildReviewStatus(sessionId, session);
+    }
+
+    /**
+     * Get the plan associated with a session.
+     * Returns undefined if the session or plan is not found.
+     */
+    getSessionPlan(sessionId: string): EnhancedPlanOutput | undefined {
+        return this.sessionPlans.get(sessionId);
+    }
+
+    /**
+     * Build the ReviewStatus object from session data.
+     */
+    private buildReviewStatus(sessionId: string, session: ReviewSession): ReviewStatus {
         const progress = this.executionService.getProgress(session.plan_id);
         const startTime = this.sessionStartTimes.get(sessionId) || Date.now();
         const tokensUsed = this.sessionTokensUsed.get(sessionId) || 0;
@@ -553,9 +792,21 @@ export class ReactiveReviewService {
             throw new Error(`Cannot resume session in state: ${session.status}`);
         }
 
-        const plan = this.sessionPlans.get(sessionId);
+        let plan = this.sessionPlans.get(sessionId);
+
+        // Try to recover plan from disk if not in memory
+        if (!plan && session.plan_id && this.persistenceService) {
+            console.error(`[ReactiveReviewService] Plan not in memory for resume, attempting to load from disk: ${session.plan_id}`);
+            const loadedPlan = await this.persistenceService.loadPlan(session.plan_id);
+            if (loadedPlan) {
+                plan = loadedPlan;
+                this.sessionPlans.set(sessionId, plan);
+                console.error(`[ReactiveReviewService] Successfully recovered plan ${session.plan_id} from disk for resume`);
+            }
+        }
+
         if (!plan) {
-            throw new Error(`No plan found for session: ${sessionId}`);
+            throw new Error(`No plan found for session: ${sessionId} (not in memory or on disk)`);
         }
 
         // Clear abort state and resume

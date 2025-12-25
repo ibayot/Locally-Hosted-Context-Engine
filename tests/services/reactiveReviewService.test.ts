@@ -1,7 +1,7 @@
 /**
  * Unit tests for ReactiveReviewService
  *
- * Tests session management, cleanup functionality, and memory management.
+ * Tests session management, cleanup functionality, memory management, and plan persistence.
  */
 
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
@@ -9,6 +9,7 @@ import { ReactiveReviewService } from '../../src/reactive/ReactiveReviewService.
 import { ContextServiceClient } from '../../src/mcp/serviceClient.js';
 import { PlanningService } from '../../src/mcp/services/planningService.js';
 import { ExecutionTrackingService } from '../../src/mcp/services/executionTrackingService.js';
+import { PlanPersistenceService } from '../../src/mcp/services/planPersistenceService.js';
 import { PRMetadata, ReviewSession } from '../../src/reactive/index.js';
 
 describe('ReactiveReviewService', () => {
@@ -16,6 +17,7 @@ describe('ReactiveReviewService', () => {
   let mockContextClient: jest.Mocked<ContextServiceClient>;
   let mockPlanningService: jest.Mocked<PlanningService>;
   let mockExecutionService: jest.Mocked<ExecutionTrackingService>;
+  let mockPersistenceService: jest.Mocked<PlanPersistenceService>;
 
   // Default TTL from config is 1 hour (3600000ms), max_sessions is 100
   // For testing, we'll manipulate the timestamps directly
@@ -45,18 +47,29 @@ describe('ReactiveReviewService', () => {
     mockContextClient = {
       getWorkspaceRoot: jest.fn(() => '/test/workspace'),
       disableCommitCache: jest.fn(),
+      getCacheStats: jest.fn(() => ({ hitRate: 0.5, size: 10, commitKeyed: false, currentCommit: null })),
     } as unknown as jest.Mocked<ContextServiceClient>;
 
     mockPlanningService = {} as unknown as jest.Mocked<PlanningService>;
     mockExecutionService = {
       getExecutionState: jest.fn(() => ({ status: 'running' })), // Return a valid execution state
+      getProgress: jest.fn(() => ({ completed_steps: 0, total_steps: 5, percentage: 0 })), // Return mock progress
       abortPlanExecution: jest.fn(),
     } as unknown as jest.Mocked<ExecutionTrackingService>;
+
+    // Mock persistence service for plan recovery tests
+    mockPersistenceService = {
+      savePlan: jest.fn(() => Promise.resolve({ success: true, plan_id: 'test-plan' })),
+      loadPlan: jest.fn(() => Promise.resolve(null)), // Default: plan not found on disk
+      listPlans: jest.fn(() => Promise.resolve([])),
+      deletePlan: jest.fn(() => Promise.resolve({ success: true })),
+    } as unknown as jest.Mocked<PlanPersistenceService>;
 
     service = new ReactiveReviewService(
       mockContextClient,
       mockPlanningService,
-      mockExecutionService
+      mockExecutionService,
+      mockPersistenceService
     );
   });
 
@@ -256,6 +269,100 @@ describe('ReactiveReviewService', () => {
         expect(serviceAny.sessions.has('active-session-0')).toBe(true);
         expect(serviceAny.sessions.has('active-session-1')).toBe(true);
         expect(serviceAny.sessions.has('active-session-2')).toBe(true);
+      });
+    });
+
+    describe('Plan Persistence and Recovery', () => {
+      it('should not mark session as zombie when persistence service can recover plan', () => {
+        const serviceAny = service as any;
+        const sessionId = 'test-session-recoverable';
+        const mockSession = createMockSession(sessionId, 'executing');
+
+        // Session has plan_id but NO plan in sessionPlans (simulating memory eviction)
+        serviceAny.sessions.set(sessionId, mockSession);
+        serviceAny.sessionStartTimes.set(sessionId, Date.now());
+        serviceAny.sessionLastActivity.set(sessionId, Date.now());
+        // Intentionally NOT setting sessionPlans - plan is "missing" from memory
+
+        // With persistence service available, isZombieSession should return false
+        // (it defers to async recovery)
+        const isZombie = serviceAny.isZombieSession(sessionId, mockSession);
+        expect(isZombie).toBe(false); // Should not be zombie - persistence service can try recovery
+      });
+
+      it('should recover plan from disk in getReviewStatusAsync', async () => {
+        const serviceAny = service as any;
+        const sessionId = 'test-session-async-recovery';
+        const mockSession = createMockSession(sessionId, 'executing');
+        const mockPlan = { id: mockSession.plan_id, steps: [], goal: 'Test goal' };
+
+        // Session exists but plan is not in memory
+        serviceAny.sessions.set(sessionId, mockSession);
+        serviceAny.sessionStartTimes.set(sessionId, Date.now());
+        serviceAny.sessionLastActivity.set(sessionId, Date.now());
+
+        // Mock persistence service to return the plan
+        mockPersistenceService.loadPlan.mockResolvedValueOnce(mockPlan as any);
+
+        // Call getReviewStatusAsync - should recover plan from disk
+        const status = await service.getReviewStatusAsync(sessionId);
+
+        // Verify loadPlan was called
+        expect(mockPersistenceService.loadPlan).toHaveBeenCalledWith(mockSession.plan_id);
+
+        // Session should NOT be marked as failed (plan was recovered)
+        expect(status?.session.status).toBe('executing');
+
+        // Plan should now be in memory
+        expect(serviceAny.sessionPlans.has(sessionId)).toBe(true);
+        expect(serviceAny.sessionPlans.get(sessionId)).toEqual(mockPlan);
+      });
+
+      it('should mark session as zombie in getReviewStatusAsync when plan not recoverable', async () => {
+        const serviceAny = service as any;
+        const sessionId = 'test-session-not-recoverable';
+        const mockSession = createMockSession(sessionId, 'executing');
+
+        // Session exists but plan is not in memory
+        serviceAny.sessions.set(sessionId, mockSession);
+        serviceAny.sessionStartTimes.set(sessionId, Date.now());
+        serviceAny.sessionLastActivity.set(sessionId, Date.now());
+
+        // Mock persistence service to return null (plan not found on disk)
+        mockPersistenceService.loadPlan.mockResolvedValueOnce(null);
+
+        // Call getReviewStatusAsync
+        const status = await service.getReviewStatusAsync(sessionId);
+
+        // Verify loadPlan was called
+        expect(mockPersistenceService.loadPlan).toHaveBeenCalledWith(mockSession.plan_id);
+
+        // Session should be marked as failed (zombie)
+        expect(status?.session.status).toBe('failed');
+        expect(status?.session.error).toContain('orphaned');
+      });
+
+      it('should set persistence service via setPersistenceService', () => {
+        const serviceAny = service as any;
+
+        // Create service without persistence
+        const serviceNoPersistence = new ReactiveReviewService(
+          mockContextClient,
+          mockPlanningService,
+          mockExecutionService
+        );
+
+        // Verify no persistence service
+        expect((serviceNoPersistence as any).persistenceService).toBeNull();
+
+        // Set persistence service
+        serviceNoPersistence.setPersistenceService(mockPersistenceService);
+
+        // Verify persistence service is set
+        expect((serviceNoPersistence as any).persistenceService).toBe(mockPersistenceService);
+
+        // Cleanup
+        serviceNoPersistence.stopCleanupTimer();
       });
     });
   });
