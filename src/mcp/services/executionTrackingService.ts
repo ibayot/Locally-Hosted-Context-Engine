@@ -1071,20 +1071,22 @@ export class ExecutionTrackingService {
         // Check if there are still running workers
         if (this.activeWorkers.size === 0) {
           // Before exiting, verify all steps are actually complete
-          const allComplete = state.steps.every(step =>
-            step.status === 'completed' || step.status === 'skipped'
+          // Capture step states atomically to avoid race conditions
+          const stepStates = state.steps.map(s => ({ stepNumber: s.step_number, status: s.status }));
+          const allComplete = stepStates.every(s =>
+            s.status === 'completed' || s.status === 'skipped'
           );
 
           if (allComplete) {
-            console.error(`[ExecutionTrackingService] All ${state.steps.length} steps completed - exiting loop`);
+            console.error(`[ExecutionTrackingService] All ${stepStates.length} steps completed - exiting loop`);
             break; // All done
           } else {
-            // Some steps are stuck - log details and exit
-            const pending = state.steps.filter(s => s.status === 'pending').length;
-            const running = state.steps.filter(s => s.status === 'in_progress').length;
-            const completed = state.steps.filter(s => s.status === 'completed').length;
-            const failed = state.steps.filter(s => s.status === 'failed').length;
-            const skipped = state.steps.filter(s => s.status === 'skipped').length;
+            // Some steps are stuck - log details and exit (using captured snapshot)
+            const pending = stepStates.filter(s => s.status === 'pending').length;
+            const running = stepStates.filter(s => s.status === 'in_progress').length;
+            const completed = stepStates.filter(s => s.status === 'completed').length;
+            const failed = stepStates.filter(s => s.status === 'failed').length;
+            const skipped = stepStates.filter(s => s.status === 'skipped').length;
 
             console.error(`[ExecutionTrackingService] WARNING: Execution stopping with incomplete steps`);
             console.error(`[ExecutionTrackingService] Status: ${completed} completed, ${failed} failed, ${skipped} skipped, ${pending} pending, ${running} running`);

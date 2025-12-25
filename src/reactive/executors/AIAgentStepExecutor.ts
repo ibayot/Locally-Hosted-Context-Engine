@@ -114,12 +114,15 @@ export function createAIAgentStepExecutor(
 
             // Get commit hash from session for caching
             const session = service.getReviewStatus(sessionId);
-            const commitHash = session?.session?.pr_metadata?.commit_hash || 'unknown';
+            const commitHash = session?.session?.pr_metadata?.commit_hash;
+            if (!commitHash) {
+                console.error('[AIAgentStepExecutor] Warning: No commit hash available, caching disabled for this request');
+            }
 
             for (const filePath of filesToReview) {
                 try {
-                    // Try cache first if enabled
-                    if (cache && commitHash !== 'unknown') {
+                    // Try cache first if enabled and commit hash available
+                    if (cache && commitHash) {
                         const cacheKey: CacheKey = {
                             commit_hash: commitHash,
                             file_path: filePath,
@@ -139,8 +142,8 @@ export function createAIAgentStepExecutor(
                     const fileFindings = await analyzeFile(filePath, step.description, cfg);
                     findings.push(...fileFindings);
 
-                    // Store in cache if enabled
-                    if (cache && commitHash !== 'unknown') {
+                    // Store in cache if enabled and commit hash available
+                    if (cache && commitHash) {
                         const cacheKey: CacheKey = {
                             commit_hash: commitHash,
                             file_path: filePath,

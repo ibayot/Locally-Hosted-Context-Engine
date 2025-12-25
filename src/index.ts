@@ -21,9 +21,20 @@
 import { ContextEngineMCPServer } from './mcp/server.js';
 import { ContextEngineHttpServer } from './http/index.js';
 import * as path from 'path';
+import * as fs from 'fs';
+import { fileURLToPath } from 'url';
 
-// Read version from package.json at build time
-const VERSION = '1.6.0';
+// Read version from package.json dynamically
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const packageJsonPath = path.resolve(__dirname, '../package.json');
+let VERSION = '1.8.0'; // Fallback version
+try {
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+  VERSION = packageJson.version || VERSION;
+} catch (error) {
+  console.error('[context-engine] Warning: Could not read package.json, using default version');
+}
 
 async function main() {
   // Get workspace path from command line args or use current directory
