@@ -36,6 +36,9 @@ try {
   console.error('[context-engine] Warning: Could not read package.json, using default version');
 }
 
+// Read version from package.json at build time
+const VERSION = '1.6.0';
+
 async function main() {
   // Get workspace path from command line args or use current directory
   const args = process.argv.slice(2);
