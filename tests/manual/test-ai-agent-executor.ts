@@ -7,12 +7,13 @@
  * 3. Performance comparison
  */
 
-import { ReactiveReviewService } from '../src/reactive/ReactiveReviewService.js';
-import { ContextServiceClient } from '../src/mcp/serviceClient.js';
-import { PlanningService } from '../src/mcp/services/planningService.js';
-import { getConfig } from '../src/reactive/config.js';
-import { createAIAgentStepExecutor } from '../src/reactive/executors/AIAgentStepExecutor.js';
-import type { PRMetadata } from '../src/reactive/index.js';
+import { ReactiveReviewService } from '../../src/reactive/ReactiveReviewService.js';
+import { ContextServiceClient } from '../../src/mcp/serviceClient.js';
+import { PlanningService } from '../../src/mcp/services/planningService.js';
+import { ExecutionTrackingService } from '../../src/mcp/services/executionTrackingService.js';
+import { getConfig } from '../../src/reactive/config.js';
+import { createAIAgentStepExecutor } from '../../src/reactive/executors/AIAgentStepExecutor.js';
+import type { PRMetadata } from '../../src/reactive/index.js';
 
 async function runTest() {
     console.log('\n=== AI Agent Step Executor Test ===\n');
@@ -33,8 +34,11 @@ async function runTest() {
     }
 
     // Initialize services
-    const serviceClient = new ContextServiceClient();
-    const reviewService = new ReactiveReviewService(serviceClient);
+    const workspacePath = process.cwd();
+    const serviceClient = new ContextServiceClient(workspacePath);
+    const planningService = new PlanningService(serviceClient);
+    const executionService = new ExecutionTrackingService();
+    const reviewService = new ReactiveReviewService(serviceClient, planningService, executionService);
 
     // Sample PR metadata for testing
     const testPR: PRMetadata = {
@@ -43,8 +47,8 @@ async function runTest() {
         changed_files: ['src/reactive/executors/AIAgentStepExecutor.ts'],
         title: 'Test: AI Agent Step Executor',
         author: 'test-user',
-        additions: 100,
-        deletions: 0,
+        lines_added: 100,
+        lines_removed: 0,
     };
 
     console.log('Test PR Metadata:');
@@ -78,25 +82,31 @@ async function runTest() {
             console.log('   Is function:', typeof executor === 'function');
         } else {
             console.log('✅ Default Executor is ENABLED (API mode)');
-            console.log('   This uses PlanningService.executeStep()');
         }
         console.log();
 
         // Test 3: Get session status
         console.log('Test 3: Getting review status...');
         const status = reviewService.getReviewStatus(session.session_id);
+        if (!status) {
+            throw new Error('Status not retrieved');
+        }
         console.log(`✅ Status retrieved`);
-        console.log(`   Status: ${status.status}`);
-        console.log(`   Progress: ${status.completed_steps}/${status.total_steps}`);
+        console.log(`   Status: ${status.session.status}`);
+        console.log(`   Progress: ${status.progress.completed_steps}/${status.progress.total_steps}`);
         console.log();
 
-        // Test 4: Get telemetry
+        // Test 4: Get telemetry (now via status)
         console.log('Test 4: Getting telemetry data...');
-        const telemetry = reviewService.getReviewTelemetry(session.session_id);
-        console.log(`✅ Telemetry retrieved`);
-        console.log(`   Elapsed time: ${telemetry.elapsed_time_ms}ms`);
-        console.log(`   Cache hits: ${telemetry.cache_hits}`);
-        console.log(`   Cache misses: ${telemetry.cache_misses}`);
+        const telemetry = status.telemetry;
+        if (telemetry) {
+            console.log(`✅ Telemetry retrieved`);
+            console.log(`   Elapsed time: ${telemetry.elapsed_ms}ms`);
+            console.log(`   Tokens used: ${telemetry.tokens_used}`);
+            console.log(`   Cache hit rate: ${telemetry.cache_hit_rate}`);
+        } else {
+            console.log('⚠️ Telemetry not available');
+        }
         console.log();
 
         console.log('=== All Tests Passed ✅ ===\n');

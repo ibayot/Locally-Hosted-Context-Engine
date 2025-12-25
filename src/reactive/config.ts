@@ -92,7 +92,6 @@ export interface ReactiveConfig {
      * @default false (opt-in)
      */
     optimize_workers: boolean;
-
     // ============================================================================
     // Tuning Parameters
     // ============================================================================
@@ -340,7 +339,6 @@ export function getConfigSummary(): string {
 export function logConfig(): void {
     console.error(getConfigSummary());
 }
-
 // ============================================================================
 // Adaptive Timeout Calculation
 // ============================================================================

@@ -147,8 +147,9 @@ export class ResponseCache {
                 if (commitResult && this.isValid(commitResult)) {
                     this.recordHit('commit');
                     // Promote to memory cache
-                    this.setMemoryCache(cacheKeyStr, commitResult);
-                    return commitResult;
+                    const promotedResult = { ...commitResult, cache_layer: 'memory' as const };
+                    this.setMemoryCache(cacheKeyStr, promotedResult);
+                    return { ...commitResult, cache_layer: 'commit' as const };
                 }
             }
         }
@@ -160,8 +161,9 @@ export class ResponseCache {
             if (fileHashResult && this.isValid(fileHashResult)) {
                 this.recordHit('file_hash');
                 // Promote to memory cache
-                this.setMemoryCache(cacheKeyStr, fileHashResult);
-                return fileHashResult;
+                const promotedResult = { ...fileHashResult, cache_layer: 'memory' as const };
+                this.setMemoryCache(cacheKeyStr, promotedResult);
+                return { ...fileHashResult, cache_layer: 'file_hash' as const };
             }
         }
 
@@ -206,8 +208,19 @@ export class ResponseCache {
      * @param commitHash Git commit hash
      */
     invalidateCommit(commitHash: string): void {
+        // Remove from memory cache
+        for (const [key] of this.memoryCache.entries()) {
+            if (key.startsWith(`${commitHash}:`)) {
+                this.memoryCache.delete(key);
+                // Also update access order
+                const index = this.cacheAccessOrder.indexOf(key);
+                if (index > -1) {
+                    this.cacheAccessOrder.splice(index, 1);
+                }
+            }
+        }
+
         this.commitCache.delete(commitHash);
-        console.error(`[ResponseCache] Invalidated commit cache for ${commitHash}`);
     }
 
     /**
@@ -217,9 +230,26 @@ export class ResponseCache {
      */
     invalidateFile(filePath: string): void {
         // Remove from memory cache
-        for (const [key, value] of this.memoryCache.entries()) {
+        for (const [key] of this.memoryCache.entries()) {
             if (key.includes(filePath)) {
                 this.memoryCache.delete(key);
+                // Also update access order
+                const index = this.cacheAccessOrder.indexOf(key);
+                if (index > -1) {
+                    this.cacheAccessOrder.splice(index, 1);
+                }
+            }
+        }
+
+        // Remove from commit cache
+        for (const [commitHash, entries] of this.commitCache.entries()) {
+            for (const [key] of entries.entries()) {
+                if (key.includes(filePath)) {
+                    entries.delete(key);
+                }
+            }
+            if (entries.size === 0) {
+                this.commitCache.delete(commitHash);
             }
         }
 
@@ -229,8 +259,6 @@ export class ResponseCache {
                 this.fileHashCache.delete(key);
             }
         }
-
-        console.error(`[ResponseCache] Invalidated cache for file ${filePath}`);
     }
 
     /**
@@ -242,7 +270,6 @@ export class ResponseCache {
         this.commitCache.clear();
         this.fileHashCache.clear();
         this.resetStats();
-        console.error('[ResponseCache] All caches cleared');
     }
 
     /**

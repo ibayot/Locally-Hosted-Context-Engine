@@ -880,7 +880,6 @@ export class ExecutionTrackingService {
   isCircuitBreakerFallbackActive(): boolean {
     return this.circuitBreakerFallbackActive;
   }
-
   /**
    * Execute a single step with timeout protection.
    * 

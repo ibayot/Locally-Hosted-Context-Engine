@@ -87,6 +87,8 @@ describe('ResponseCache', () => {
             const maxSize = 3;
             const smallCache = new ResponseCache({
                 max_memory_cache_size: maxSize,
+                enable_commit_cache: false,
+                enable_file_hash_cache: false,
             });
 
             // Fill cache beyond capacity
@@ -118,6 +120,12 @@ describe('ResponseCache', () => {
 
     describe('Commit Cache Layer', () => {
         it('should retrieve from commit cache', () => {
+            const commitOnlyCache = new ResponseCache({
+                enable_memory_cache: false,
+                enable_commit_cache: true,
+                enable_file_hash_cache: false,
+            });
+
             const key: CacheKey = {
                 commit_hash: 'commit1',
                 file_path: 'src/test.ts',
@@ -125,15 +133,21 @@ describe('ResponseCache', () => {
                 step_description: 'Review',
             };
 
-            cache.set(key, []);
-            cache.clear(); // Clear memory cache only
+            commitOnlyCache.set(key, []);
 
-            // Should still hit commit cache
-            const result = cache.get(key);
+            // Should hit commit cache (memory is disabled)
+            const result = commitOnlyCache.get(key);
             expect(result).not.toBeNull();
+            expect(result?.cache_layer).toBe('commit');
         });
 
         it('should invalidate commit cache', () => {
+            const commitOnlyCache = new ResponseCache({
+                enable_memory_cache: true,
+                enable_commit_cache: true,
+                enable_file_hash_cache: false, // Important to disable this!
+            });
+
             const key: CacheKey = {
                 commit_hash: 'commit1',
                 file_path: 'src/test.ts',
@@ -141,16 +155,22 @@ describe('ResponseCache', () => {
                 step_description: 'Review',
             };
 
-            cache.set(key, []);
-            cache.invalidateCommit('commit1');
+            commitOnlyCache.set(key, []);
+            commitOnlyCache.invalidateCommit('commit1');
 
-            const result = cache.get(key);
+            const result = commitOnlyCache.get(key);
             expect(result).toBeNull();
         });
     });
 
     describe('File Hash Cache Layer', () => {
         it('should match files with same content', () => {
+            const fileHashOnlyCache = new ResponseCache({
+                enable_memory_cache: false,
+                enable_commit_cache: false,
+                enable_file_hash_cache: true,
+            });
+
             const key1: CacheKey = {
                 commit_hash: 'commit1',
                 file_path: 'src/test.ts',
@@ -172,8 +192,8 @@ describe('ResponseCache', () => {
                 message: 'Test',
             }];
 
-            cache.set(key1, findings);
-            const result = cache.get(key2);
+            fileHashOnlyCache.set(key1, findings);
+            const result = fileHashOnlyCache.get(key2);
 
             // Should hit file hash cache even with different commit
             expect(result).not.toBeNull();
