@@ -31,6 +31,7 @@ Version 1.8.0 represents a **major milestone** in the Context Engine MCP Server,
 - **Step Dependency Blocking**: Removed unnecessary step dependencies in review plans to enable true parallel execution.
 - **HTTP Server**: Added robust error handling and graceful shutdown for SIGINT/SIGTERM.
 - **Dynamic Versioning**: Fixed hardcoded version string in server entry point.
+- **Documentation Audit**: Corrected total tool counts and categorization across all documentation files (31 → 38 tools).
 
 ---
 

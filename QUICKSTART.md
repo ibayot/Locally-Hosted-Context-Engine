@@ -186,12 +186,12 @@ Antigravity uses a JSON configuration file for MCP servers.
 
 1. Open Antigravity
 2. Check the MCP servers panel or settings
-3. Verify `context-engine` appears with these tools:
-   - `semantic_search`
-   - `get_file`
+3. Verify `context-engine` appears with its tools (38 tools available), including:
    - `get_context_for_prompt`
-   - `enhance_prompt`
-   - `index_workspace`
+   - `semantic_search`
+   - `create_plan`
+   - `reactive_review_pr`
+   - `add_memory`
 
 ---
 
@@ -365,7 +365,7 @@ For any MCP client not listed above, use this general pattern:
 3. **Key requirements:**
    - Use **absolute paths** (not relative)
    - Transport: **stdio** (not HTTP)
-   - The server exposes 5 tools: `semantic_search`, `get_file`, `get_context_for_prompt`, `enhance_prompt`, `index_workspace`
+   - The server exposes **38 tools** across Context, Planning, Memory, and Review categories.
 
 4. **Restart your MCP client** after configuration changes
 
@@ -384,10 +384,7 @@ codex
 
 1. Launch Codex CLI: `codex`
 2. In the TUI, type `/mcp` to see connected MCP servers
-3. You should see `context-engine` listed with available tools:
-   - `semantic_search`
-   - `get_file`
-   - `get_context_for_prompt`
+3. You should see `context-engine` listed with **38 tools** available across 6 categories (Core, Memory, Planning, Plan Management, Review, Reactive).
 
 ## Step 8: Try It Out!
 

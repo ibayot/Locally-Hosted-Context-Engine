@@ -102,9 +102,15 @@ src/
     ├── server.ts              # MCP server (Layer 3)
     ├── serviceClient.ts       # Context service (Layer 2)
     └── tools/
-        ├── search.ts          # semantic_search tool
-        ├── file.ts            # get_file tool
-        └── context.ts         # get_context_for_prompt tool
+        ├── codebaseRetrieval.ts # codebase_retrieval tool
+        ├── context.ts           # get_context_for_prompt, semantic_search, get_file, enhance_prompt
+        ├── index.ts             # index_workspace, index_status
+        ├── memory.ts            # add_memory, list_memories
+        ├── plan.ts              # create_plan, refine_plan, visualize_plan, execute_plan
+        ├── planManagement.ts    # save_plan, load_plan, list_plans, delete_plan, etc. (13 tools)
+        ├── codeReview.ts        # review_changes, review_git_diff
+        ├── reactiveReview.ts    # reactive_review_pr, get_review_status, etc. (7 tools)
+        └── lifecycle.ts         # reindex_workspace, clear_index
 ```
 
 ## 🔍 Common Tasks
