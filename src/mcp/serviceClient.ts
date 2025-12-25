@@ -1413,51 +1413,44 @@ export class ContextServiceClient {
       };
     }
 
-    // Log all discovered files for debugging
-    console.error('Files to index:');
-    for (const fp of filePaths) {
+    // Log all discovered files for debugging (only first 50 to avoid log spam)
+    console.error('Files to index (showing first 50):');
+    for (const fp of filePaths.slice(0, 50)) {
       console.error(`  - ${fp}`);
     }
-
-    // Read file contents and prepare for indexing
-    const files: Array<{ path: string; contents: string }> = [];
-    let skippedCount = 0;
-    for (const relativePath of filePaths) {
-      const contents = this.readFileContents(relativePath);
-      if (contents !== null) {
-        files.push({ path: relativePath, contents });
-      } else {
-        skippedCount++;
-      }
+    if (filePaths.length > 50) {
+      console.error(`  ... and ${filePaths.length - 50} more files`);
     }
 
-    console.error(`Prepared ${files.length} files for indexing (skipped ${skippedCount})`);
-
-    if (files.length === 0) {
-      console.error('No files to index after filtering');
-      this.updateIndexStatus({
-        status: 'error',
-        lastError: 'No indexable files found',
-        fileCount: 0,
-      });
-      return {
-        indexed: 0,
-        skipped: skippedCount,
-        errors: ['No indexable files found'],
-        duration: Date.now() - startTime,
-      };
-    }
-
-    // Add files to index in batches with error handling
-    const BATCH_SIZE = 10; // Reduced batch size for better error isolation
+    // STREAMING APPROACH: Read and index files in batches to minimize memory usage
+    // Instead of loading all files into memory, we read files just-in-time for each batch
+    const BATCH_SIZE = 10; // Reduced batch size for better error isolation and memory efficiency
+    const totalBatches = Math.ceil(filePaths.length / BATCH_SIZE);
     let successCount = 0;
     let errorCount = 0;
+    let skippedCount = 0;
     const errors: string[] = [];
 
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
+      const batchPaths = filePaths.slice(i, i + BATCH_SIZE);
       const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(files.length / BATCH_SIZE);
+      const isLastBatch = i + BATCH_SIZE >= filePaths.length;
+
+      // Read file contents for this batch only (streaming approach)
+      const batch: Array<{ path: string; contents: string }> = [];
+      for (const relativePath of batchPaths) {
+        const contents = this.readFileContents(relativePath);
+        if (contents !== null) {
+          batch.push({ path: relativePath, contents });
+        } else {
+          skippedCount++;
+        }
+      }
+
+      if (batch.length === 0) {
+        console.error(`  Batch ${batchNum}/${totalBatches}: All files skipped`);
+        continue;
+      }
 
       console.error(`\nIndexing batch ${batchNum}/${totalBatches}:`);
       for (const file of batch) {
@@ -1466,7 +1459,6 @@ export class ContextServiceClient {
 
       try {
         // Don't wait for indexing on intermediate batches
-        const isLastBatch = i + BATCH_SIZE >= files.length;
         await context.addToIndex(batch, { waitForIndexing: isLastBatch });
         successCount += batch.length;
         console.error(`  ✓ Batch ${batchNum} indexed successfully`);
@@ -1491,9 +1483,28 @@ export class ContextServiceClient {
           }
         }
       }
+
+      // Allow GC to reclaim memory from this batch before loading the next
+      // The batch array goes out of scope at end of loop iteration
     }
 
-    console.error(`\nIndexing complete: ${successCount} succeeded, ${errorCount} had errors`);
+    // Check if any files were actually indexed
+    if (successCount === 0) {
+      console.error('No files were successfully indexed');
+      this.updateIndexStatus({
+        status: 'error',
+        lastError: errors[0] || 'No files could be indexed',
+        fileCount: 0,
+      });
+      return {
+        indexed: 0,
+        skipped: skippedCount + errorCount,
+        errors: errors.length > 0 ? errors : ['No files could be indexed'],
+        duration: Date.now() - startTime,
+      };
+    }
+
+    console.error(`\nIndexing complete: ${successCount} succeeded, ${errorCount} had errors, ${skippedCount} skipped`);
 
     // Save state after indexing (even if some files failed)
     if (successCount > 0) {

@@ -352,10 +352,21 @@ The following additional issues were discovered during a comprehensive codebase 
    - FileWatcher now loads patterns from .gitignore and .contextignore
    - Patterns converted to chokidar-compatible format
 
-### Remaining Work
+### Phase 2 Fixes Applied (2025-12-25 Audit - Continued)
 
-1. **P0-1: Diff parsing line numbers** - Need proper old/new line tracking
-2. **P0-2: Indexing memory spikes** - Need streaming approach for large workspaces
+10. ✅ **P0-1: Diff parsing line numbers** - Fixed proper old/new line tracking
+    - Modified `parseHunkLines()` to accept both `oldStart` and `newStart` parameters
+    - `oldLineNum` now properly initialized from `oldStart` instead of `newStart`
+    - Removed the "Simplified" comment and implemented correct tracking
+
+11. ✅ **P0-2: Indexing memory spikes** - Implemented streaming approach
+    - Changed from loading all files into memory to batch-by-batch streaming
+    - Files are now read just-in-time for each batch (10 files at a time)
+    - Memory from previous batches can be garbage collected before loading new batches
+    - Log spam reduced: only first 50 files shown with "... and N more files" summary
+    - Added clear logging for skipped files per batch
+
+### All P0 Issues Now Resolved ✅
 
 ---
 
