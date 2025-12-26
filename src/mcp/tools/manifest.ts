@@ -27,6 +27,7 @@ const manifest = {
     'version_history',
     'code_review',
     'enterprise_review',
+    'static_analysis',
   ],
   tools: [
     // Core Context Tools
@@ -67,6 +68,9 @@ const manifest = {
     'review_git_diff',
     // Enterprise Review (v1.8.0)
     'review_diff',
+    // Ecosystem utilities (optional)
+    'check_invariants',
+    'run_static_analysis',
   ],
   features: {
     planning: {
@@ -138,6 +142,17 @@ const manifest = {
         'Change classification (feature/bugfix/refactor/infra/docs)',
         'Hotspot detection for sensitive areas',
         'Structured JSON output suitable for CI/IDE integrations',
+        'Optional local static analyzers (tsc/semgrep) for additional signal',
+      ],
+    },
+    static_analysis: {
+      description: 'Optional local static analyzers for CI/IDE feedback',
+      version: '1.8.0',
+      tools: ['run_static_analysis', 'check_invariants'],
+      features: [
+        'TypeScript typecheck via tsc (noEmit)',
+        'Optional semgrep integration when available on PATH',
+        'Deterministic output (no LLM) suitable for CI',
       ],
     },
   },

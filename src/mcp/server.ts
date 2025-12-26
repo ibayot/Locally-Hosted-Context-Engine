@@ -73,6 +73,8 @@ import {
 import { reviewChangesTool, handleReviewChanges } from './tools/codeReview.js';
 import { reviewGitDiffTool, handleReviewGitDiff } from './tools/gitReview.js';
 import { reviewDiffTool, handleReviewDiff } from './tools/reviewDiff.js';
+import { checkInvariantsTool, handleCheckInvariants } from './tools/checkInvariants.js';
+import { runStaticAnalysisTool, handleRunStaticAnalysis } from './tools/staticAnalysis.js';
 import {
   reactiveReviewTools,
   handleReactiveReviewPR,
@@ -251,6 +253,8 @@ export class ContextEngineMCPServer {
           reviewChangesTool,
           reviewGitDiffTool,
           reviewDiffTool,
+          checkInvariantsTool,
+          runStaticAnalysisTool,
           // Reactive Review tools (Phase 4)
           ...reactiveReviewTools,
         ],
@@ -401,6 +405,14 @@ export class ContextEngineMCPServer {
             result = await handleReviewDiff(args as any, this.serviceClient);
             break;
 
+          case 'check_invariants':
+            result = await handleCheckInvariants(args as any, this.serviceClient);
+            break;
+
+          case 'run_static_analysis':
+            result = await handleRunStaticAnalysis(args as any, this.serviceClient);
+            break;
+
           // Reactive Review tools (Phase 4)
           case 'reactive_review_pr':
             result = await handleReactiveReviewPR(args as any, this.serviceClient);
@@ -490,7 +502,7 @@ export class ContextEngineMCPServer {
     console.error('    - start_step, complete_step, fail_step, view_progress');
     console.error('    - view_history, compare_plan_versions, rollback_plan');
     console.error('  Code Review (v1.5.0):');
-    console.error('    - review_changes, review_git_diff, review_diff');
+    console.error('    - review_changes, review_git_diff, review_diff, check_invariants, run_static_analysis');
     console.error('  Reactive Review (v1.6.0):');
     console.error('    - reactive_review_pr, get_review_status');
     console.error('    - pause_review, resume_review, get_review_telemetry');

@@ -14,6 +14,8 @@ import type { EnterpriseLLMClient } from './llm/types.js';
 import { scrubSecrets } from '../reactive/guardrails/index.js';
 import { toSarif } from './output/sarif.js';
 import { formatGitHubComment } from './output/github.js';
+import { runStaticAnalyzers } from './checks/adapters/index.js';
+import type { StaticAnalyzerId } from './checks/adapters/types.js';
 
 const TOOL_VERSION = '2.0.0-phase1';
 
@@ -22,6 +24,12 @@ export interface ReviewDiffOptions {
   max_findings?: number;
   categories?: string[];
   invariants_path?: string;
+  // Static analysis (opt-in)
+  enable_static_analysis?: boolean;
+  static_analyzers?: StaticAnalyzerId[];
+  static_analysis_timeout_ms?: number;
+  static_analysis_max_findings_per_analyzer?: number;
+  semgrep_args?: string[];
   enable_llm?: boolean;
   llm_force?: boolean;
   two_pass?: boolean;
@@ -53,20 +61,27 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
 
   const parsedDiff: ParsedDiff = parseUnifiedDiff(input.diff);
   const classification = classifyChange(parsedDiff);
+  const preflightStart = Date.now();
   const preflight = runDeterministicPreflight(parsedDiff, input.changed_files);
+  const preflightMs = Date.now() - preflightStart;
 
   const warnings: string[] = [];
   const invariantFindings: EnterpriseFinding[] = [];
+  let invariantsExecuted = 0;
+  let invariantsMs = 0;
   let invariantsForPrompt = '(none)';
   if (input.options?.invariants_path) {
     if (!input.workspace_path) {
       warnings.push('invariants_path provided but workspace_path was not provided; skipping invariants');
     } else {
       try {
+        const invStart = Date.now();
         const config = loadInvariantsConfig(input.workspace_path, input.options.invariants_path);
         const runResult = runInvariants(parsedDiff, preflight.changed_files, config);
         invariantFindings.push(...runResult.findings);
         warnings.push(...runResult.warnings);
+        invariantsExecuted = runResult.checked_invariants;
+        invariantsMs = Date.now() - invStart;
         invariantsForPrompt = formatInvariants(config);
       } catch (e) {
         warnings.push(`Failed to load/run invariants: ${String(e)}`);
@@ -84,6 +99,30 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
     isBinaryChange: preflight.is_binary_change,
   });
 
+  const staticFindings: EnterpriseFinding[] = [];
+  let staticAnalyzersExecuted = 0;
+  let staticAnalysisMs = 0;
+  if (input.options?.enable_static_analysis) {
+    if (!input.workspace_path) {
+      warnings.push('enable_static_analysis was true but workspace_path was not provided; skipping static analysis');
+    } else {
+      const staticStart = Date.now();
+      const analyzers = (input.options.static_analyzers ?? ['tsc']).filter(Boolean);
+      const changedFiles = preflight.changed_files.length > 0 ? preflight.changed_files : input.changed_files ?? [];
+      const run = await runStaticAnalyzers({
+        input: { workspace_path: input.workspace_path, changed_files: changedFiles, diff: input.diff },
+        analyzers: analyzers as StaticAnalyzerId[],
+        timeoutMs: input.options.static_analysis_timeout_ms ?? 60_000,
+        maxFindingsPerAnalyzer: input.options.static_analysis_max_findings_per_analyzer ?? 20,
+        semgrepArgs: input.options.semgrep_args,
+      });
+      staticAnalysisMs = Date.now() - staticStart;
+      staticAnalyzersExecuted = run.results.filter(r => !r.skipped_reason).length;
+      staticFindings.push(...run.findings);
+      warnings.push(...run.warnings);
+    }
+  }
+
   const llmEnabled = input.options?.enable_llm ?? false;
   const llmForce = input.options?.llm_force ?? false;
   const riskThreshold = input.options?.risk_threshold ?? 3;
@@ -95,6 +134,10 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
   let llmPasses = 0;
   let llmSkippedReason: string | undefined;
   let llmModel: string | undefined;
+  let contextFetchMs = 0;
+  let secretsScrubMs = 0;
+  let llmStructuralMs = 0;
+  let llmDetailedMs = 0;
 
   if (llmEnabled) {
     const runtime = input.runtime;
@@ -121,10 +164,15 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
           maxFiles: input.options?.max_context_files ?? 5,
         });
 
+        const contextStart = Date.now();
         const contextRaw = await fetchPlannedContext(parsedDiff, plan, readFile, { contextLines: 20 });
+        contextFetchMs = Date.now() - contextStart;
+
+        const scrubStart = Date.now();
         const scrubbedContext = scrubSecrets(contextRaw).scrubbedContent;
         const scrubbedDiff = scrubSecrets(input.diff).scrubbedContent;
         const scrubbedInvariants = scrubSecrets(invariantsForPrompt).scrubbedContent;
+        secretsScrubMs = Date.now() - scrubStart;
 
         const twoPass = await runTwoPassReview({
           llm,
@@ -154,11 +202,13 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
         llmFindings.push(...twoPass.findings);
         warnings.push(...twoPass.warnings);
         llmPasses = twoPass.passes_executed;
+        llmStructuralMs = twoPass.timings_ms.structural;
+        llmDetailedMs = twoPass.timings_ms.detailed ?? 0;
       }
     }
   }
 
-  const mergedFindings = dedupeFindingsById([...invariantFindings, ...llmFindings, ...findings]);
+  const mergedFindings = dedupeFindingsById([...invariantFindings, ...staticFindings, ...llmFindings, ...findings]);
   const filtered = mergedFindings
     .filter(f => f.confidence >= confidenceThreshold)
     .filter(f => (categories && categories.length > 0 ? categories.includes(f.category as any) : true));
@@ -198,9 +248,20 @@ export async function reviewDiff(input: ReviewDiffInput): Promise<EnterpriseRevi
       lines_removed: parsedDiff.lines_removed,
       duration_ms: durationMs,
       deterministic_checks_executed: preflight.deterministic_checks_executed,
+      invariants_executed: invariantsExecuted,
+      static_analyzers_executed: staticAnalyzersExecuted,
       llm_passes_executed: llmPasses,
       llm_findings_added: llmFindings.length,
       llm_skipped_reason: llmSkippedReason,
+      timings_ms: {
+        preflight: preflightMs,
+        invariants: invariantsMs,
+        static_analysis: staticAnalysisMs,
+        context_fetch: contextFetchMs,
+        secrets_scrub: secretsScrubMs,
+        llm_structural: llmStructuralMs,
+        llm_detailed: llmDetailedMs,
+      },
     },
     metadata: {
       reviewed_at: new Date().toISOString(),

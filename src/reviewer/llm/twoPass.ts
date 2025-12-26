@@ -95,17 +95,25 @@ export async function runTwoPassReview(args: {
   riskScore: number;
   buildStructuralPrompt: () => string;
   buildDetailedPrompt: (structuralJson: string) => string;
-}): Promise<{ findings: EnterpriseFinding[]; warnings: string[]; passes_executed: number }> {
+}): Promise<{
+  findings: EnterpriseFinding[];
+  warnings: string[];
+  passes_executed: number;
+  timings_ms: { structural: number; detailed?: number };
+}> {
   const warnings: string[] = [];
   if (!args.options.enabled) {
-    return { findings: [], warnings, passes_executed: 0 };
+    return { findings: [], warnings, passes_executed: 0, timings_ms: { structural: 0 } };
   }
 
+  const structuralStart = Date.now();
   const structural = await callAndParse(args.llm, 'Enterprise code review (structural)', args.buildStructuralPrompt());
+  const structuralMs = Date.now() - structuralStart;
   warnings.push(...structural.warnings);
 
   let findings: EnterpriseFinding[] = structural.findings;
   let passes = 1;
+  let detailedMs: number | undefined;
 
   const shouldRunDetailed =
     args.options.twoPass &&
@@ -113,12 +121,13 @@ export async function runTwoPassReview(args: {
 
   if (shouldRunDetailed) {
     const detailedPrompt = args.buildDetailedPrompt(structural.raw_json ?? JSON.stringify({ findings: structural.findings }));
+    const detailedStart = Date.now();
     const detailed = await callAndParse(args.llm, 'Enterprise code review (detailed)', detailedPrompt);
+    detailedMs = Date.now() - detailedStart;
     warnings.push(...detailed.warnings);
     findings = [...findings, ...detailed.findings];
     passes = 2;
   }
 
-  return { findings, warnings, passes_executed: passes };
+  return { findings, warnings, passes_executed: passes, timings_ms: { structural: structuralMs, detailed: detailedMs } };
 }
-

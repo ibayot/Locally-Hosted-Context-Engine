@@ -54,6 +54,9 @@ describe('reviewer/llm/twoPass', () => {
 
     expect(result.passes_executed).toBe(2);
     expect(result.findings.map(f => f.id).sort()).toEqual(['F001', 'F002']);
+    expect(typeof result.timings_ms.structural).toBe('number');
+    expect(result.timings_ms.structural).toBeGreaterThanOrEqual(0);
+    expect(typeof result.timings_ms.detailed).toBe('number');
+    expect(result.timings_ms.detailed).toBeGreaterThanOrEqual(0);
   });
 });
-

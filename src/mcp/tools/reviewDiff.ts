@@ -18,6 +18,11 @@ export interface ReviewDiffArgs {
     max_findings?: number;
     categories?: string[];
     invariants_path?: string;
+    enable_static_analysis?: boolean;
+    static_analyzers?: Array<'tsc' | 'semgrep'>;
+    static_analysis_timeout_ms?: number;
+    static_analysis_max_findings_per_analyzer?: number;
+    semgrep_args?: string[];
     enable_llm?: boolean;
     llm_force?: boolean;
     two_pass?: boolean;
@@ -76,6 +81,31 @@ export const reviewDiffTool = {
           max_findings: { type: 'number', description: 'Maximum number of findings to return', default: 20 },
           categories: { type: 'array', items: { type: 'string' }, description: 'Optional categories to focus on' },
           invariants_path: { type: 'string', description: 'Path to invariants config (Phase 2)' },
+          enable_static_analysis: {
+            type: 'boolean',
+            description: 'Run local static analyzers (TypeScript typecheck / optional semgrep). Default: false',
+            default: false,
+          },
+          static_analyzers: {
+            type: 'array',
+            items: { type: 'string', enum: ['tsc', 'semgrep'] },
+            description: 'Which analyzers to run when enable_static_analysis is true. Default: ["tsc"]',
+          },
+          static_analysis_timeout_ms: {
+            type: 'number',
+            description: 'Timeout per static analyzer in milliseconds. Default: 60000',
+            default: 60000,
+          },
+          static_analysis_max_findings_per_analyzer: {
+            type: 'number',
+            description: 'Max findings per analyzer. Default: 20',
+            default: 20,
+          },
+          semgrep_args: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional semgrep args (e.g. ["--config","p/ci"]). Only used when semgrep is selected.',
+          },
           enable_llm: { type: 'boolean', description: 'Enable LLM review pass (Phase 3). Default: false', default: false },
           llm_force: { type: 'boolean', description: 'Force LLM review even if noise-gates would skip it. Default: false', default: false },
           two_pass: { type: 'boolean', description: 'Enable two-pass LLM review when enabled. Default: true', default: true },

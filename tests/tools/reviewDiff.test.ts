@@ -28,6 +28,8 @@ index 1234567..abcdefg 100644
     expect(result).toHaveProperty('findings');
     expect(Array.isArray(result.findings)).toBe(true);
     expect(result.stats.files_changed).toBe(1);
+    expect(result.stats).toHaveProperty('timings_ms');
+    expect(typeof result.stats.timings_ms.preflight).toBe('number');
   });
 
   it('runs invariants when invariants_path is provided', async () => {
@@ -109,6 +111,7 @@ index 1234567..abcdefg 100644
     expect(result.stats.llm_passes_executed).toBe(2);
     expect(result.findings.some((f: any) => f.id === 'F001')).toBe(true);
     expect(result.findings.some((f: any) => f.id === 'F002')).toBe(true);
+    expect(typeof result.stats.timings_ms.llm_structural).toBe('number');
   });
 
   it('sets should_fail when a CRITICAL invariant is violated', async () => {

@@ -38,9 +38,20 @@ export interface ReviewStats {
   lines_removed: number;
   duration_ms: number;
   deterministic_checks_executed: number;
+  invariants_executed?: number;
+  static_analyzers_executed?: number;
   llm_passes_executed?: number;
   llm_findings_added?: number;
   llm_skipped_reason?: string;
+  timings_ms?: {
+    preflight?: number;
+    invariants?: number;
+    static_analysis?: number;
+    context_fetch?: number;
+    secrets_scrub?: number;
+    llm_structural?: number;
+    llm_detailed?: number;
+  };
 }
 
 export interface ReviewMetadata {
