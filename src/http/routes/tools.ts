@@ -11,6 +11,7 @@ import type { ContextServiceClient, ContextOptions } from '../../mcp/serviceClie
 import { handleCreatePlan, type CreatePlanArgs } from '../../mcp/tools/plan.js';
 import { handleReviewChanges, type ReviewChangesArgs } from '../../mcp/tools/codeReview.js';
 import { handleReviewGitDiff, type ReviewGitDiffArgs } from '../../mcp/tools/gitReview.js';
+import { handleReviewAuto, type ReviewAutoArgs } from '../../mcp/tools/reviewAuto.js';
 import { badRequest, HttpError } from '../middleware/errorHandler.js';
 
 const DEFAULT_TOOL_TIMEOUT_MS = 30000;
@@ -60,6 +61,7 @@ function asyncHandler(
  * - POST /api/v1/file - Get file contents
  * - POST /api/v1/review-changes - Review code changes from diff
  * - POST /api/v1/review-git-diff - Review code changes from git automatically
+ * - POST /api/v1/review-auto - Auto-select review tool (diff vs git)
  */
 export function createToolsRouter(serviceClient: ContextServiceClient): Router {
     const router = createRouter();
@@ -317,6 +319,26 @@ export function createToolsRouter(serviceClient: ContextServiceClient): Router {
                 handleReviewGitDiff({ target, base, include_patterns, options } as ReviewGitDiffArgs, serviceClient),
                 AI_TOOL_TIMEOUT_MS,
                 'Git code review'
+            );
+            const result = JSON.parse(resultJson);
+            res.json(result);
+        })
+    );
+
+    /**
+     * POST /review-auto
+     * Automatically chooses the best review tool.
+     * Body: ReviewAutoArgs
+     */
+    router.post(
+        '/review-auto',
+        asyncHandler(async (req, res) => {
+            const args = (req.body || {}) as ReviewAutoArgs;
+
+            const resultJson = await withTimeout(
+                handleReviewAuto(args, serviceClient),
+                AI_TOOL_TIMEOUT_MS,
+                'Auto code review'
             );
             const result = JSON.parse(resultJson);
             res.json(result);
