@@ -253,6 +253,22 @@ ls -la /path/to/file
 - Use more specific queries
 - Reduce result limits
 
+### Metrics endpoint not available
+
+**Symptoms**:
+- `GET /metrics` returns 404, or
+- You don't see a `[HTTP] Metrics:` line on startup
+
+**Cause**: Metrics are opt-in and only exposed when the HTTP server is enabled.
+
+**Solutions**:
+- Start with `--http` (or `--http-only`)
+- Set both environment variables:
+  - `CE_METRICS=true`
+  - `CE_HTTP_METRICS=true`
+- Verify:
+  - `curl http://localhost:3333/metrics`
+
 ## Windows-Specific Issues
 
 ### Path issues with backslashes

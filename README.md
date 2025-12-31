@@ -608,6 +608,28 @@ The server will automatically use the appropriate tools to provide relevant cont
 | `CE_INDEX_STATE_STORE` | Persist per-file index hashes to `.augment-index-state.json` | `false` |
 | `CE_SKIP_UNCHANGED_INDEXING` | Skip re-indexing unchanged files (requires `CE_INDEX_STATE_STORE=true`) | `false` |
 | `CE_HASH_NORMALIZE_EOL` | Normalize CRLF/LF when hashing (recommended with state store across Windows/Linux) | `false` |
+| `CE_METRICS` | Enable in-process metrics collection (Prometheus format) | `false` |
+| `CE_HTTP_METRICS` | Expose `GET /metrics` when running with `--http` | `false` |
+
+### Metrics (optional)
+
+To expose a Prometheus-style endpoint, start the server in HTTP mode and enable both flags:
+
+```bash
+export CE_METRICS=true
+export CE_HTTP_METRICS=true
+node dist/index.js --workspace /path/to/project --http --port 3333
+```
+
+Then fetch:
+
+```bash
+curl http://localhost:3333/metrics
+```
+
+Notes:
+- Metrics are intended to use low-cardinality labels (avoid per-query/per-path labels).
+- The in-process registry caps total series to prevent unbounded memory growth.
 
 ### Offline-Only Mode (v1.1.0)
 

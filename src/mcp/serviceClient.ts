@@ -24,6 +24,7 @@ import { fileURLToPath } from 'url';
 import { Worker } from 'worker_threads';
 import type { WorkerMessage } from '../worker/messages.js';
 import { featureEnabled } from '../config/features.js';
+import { incCounter, observeDurationMs, setGauge } from '../metrics/metrics.js';
 import { JsonIndexStateStore, type IndexStateFile } from './indexStateStore.js';
 
 // ============================================================================
@@ -1825,13 +1826,15 @@ export class ContextServiceClient {
   async indexWorkspace(): Promise<IndexResult> {
     return this.enqueueIndexing(async () => {
       const startTime = Date.now();
+      let metricsResult: 'success' | 'error' = 'success';
+      try {
 
-    if (this.isOfflineMode()) {
-      const message = 'Indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
-      console.error(message);
-      this.updateIndexStatus({ status: 'error', lastError: message });
-      throw new Error(message);
-    }
+	    if (this.isOfflineMode()) {
+	      const message = 'Indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
+	      console.error(message);
+	      this.updateIndexStatus({ status: 'error', lastError: message });
+	      throw new Error(message);
+	    }
 
       this.updateIndexStatus({ status: 'indexing', lastError: undefined });
       console.error(`Indexing workspace: ${this.workspacePath}`);
@@ -2083,12 +2086,29 @@ export class ContextServiceClient {
     this.clearCache();
     console.error('Workspace indexing finished');
 
-      return {
-        indexed: successCount,
-        skipped: skippedCount + errorCount + unchangedSkippedCount,
-        errors,
-        duration: Date.now() - startTime,
-      };
+	      return {
+	        indexed: successCount,
+	        skipped: skippedCount + errorCount + unchangedSkippedCount,
+	        errors,
+	        duration: Date.now() - startTime,
+	      };
+      } catch (e) {
+        metricsResult = 'error';
+        throw e;
+      } finally {
+        incCounter(
+          'context_engine_index_workspace_runs_total',
+          { result: metricsResult },
+          1,
+          'Total indexWorkspace runs.'
+        );
+        observeDurationMs(
+          'context_engine_index_workspace_duration_seconds',
+          { result: metricsResult },
+          Date.now() - startTime,
+          { help: 'indexWorkspace end-to-end duration in seconds.' }
+        );
+      }
     });
   }
 
@@ -2460,6 +2480,7 @@ export class ContextServiceClient {
     topK: number = 10,
     options?: { bypassCache?: boolean; maxOutputLength?: number }
   ): Promise<SearchResult[]> {
+    const metricsStart = Date.now();
     const debugSearch = process.env.CE_DEBUG_SEARCH === 'true';
     const bypassCache = options?.bypassCache ?? false;
 
@@ -2470,6 +2491,18 @@ export class ContextServiceClient {
       const cached = this.getCachedSearch(memoryCacheKey);
       if (cached) {
         this.cacheHits++;
+        incCounter(
+          'context_engine_semantic_search_total',
+          { cache: 'memory', bypass: bypassCache ? 'true' : 'false' },
+          1,
+          'Total semanticSearch calls (labeled by cache path).'
+        );
+        observeDurationMs(
+          'context_engine_semantic_search_duration_seconds',
+          { cache: 'memory', bypass: bypassCache ? 'true' : 'false' },
+          Date.now() - metricsStart,
+          { help: 'semanticSearch end-to-end duration in seconds (includes cache hits).' }
+        );
         if (debugSearch) {
           console.error(`[semanticSearch] Cache hit for query: ${query}`);
         }
@@ -2488,6 +2521,18 @@ export class ContextServiceClient {
       const persistent = this.getPersistentSearch(persistentCacheKey);
       if (persistent) {
         this.cacheHits++;
+        incCounter(
+          'context_engine_semantic_search_total',
+          { cache: 'persistent', bypass: bypassCache ? 'true' : 'false' },
+          1,
+          'Total semanticSearch calls (labeled by cache path).'
+        );
+        observeDurationMs(
+          'context_engine_semantic_search_duration_seconds',
+          { cache: 'persistent', bypass: bypassCache ? 'true' : 'false' },
+          Date.now() - metricsStart,
+          { help: 'semanticSearch end-to-end duration in seconds (includes cache hits).' }
+        );
         if (debugSearch) {
           console.error(`[semanticSearch] Persistent cache hit for query: ${query}`);
         }
@@ -2526,9 +2571,33 @@ export class ContextServiceClient {
           this.setPersistentSearch(persistentCacheKey, searchResults);
         }
       }
+      incCounter(
+        'context_engine_semantic_search_total',
+        { cache: 'miss', bypass: bypassCache ? 'true' : 'false' },
+        1,
+        'Total semanticSearch calls (labeled by cache path).'
+      );
+      observeDurationMs(
+        'context_engine_semantic_search_duration_seconds',
+        { cache: 'miss', bypass: bypassCache ? 'true' : 'false' },
+        Date.now() - metricsStart,
+        { help: 'semanticSearch end-to-end duration in seconds (includes cache hits).' }
+      );
       return searchResults;
     } catch (error) {
       console.error('Search failed:', error);
+      incCounter(
+        'context_engine_semantic_search_total',
+        { cache: 'error', bypass: bypassCache ? 'true' : 'false' },
+        1,
+        'Total semanticSearch calls (labeled by cache path).'
+      );
+      observeDurationMs(
+        'context_engine_semantic_search_duration_seconds',
+        { cache: 'error', bypass: bypassCache ? 'true' : 'false' },
+        Date.now() - metricsStart,
+        { help: 'semanticSearch end-to-end duration in seconds (includes cache hits).' }
+      );
       return [];
     }
   }
@@ -2546,27 +2615,61 @@ export class ContextServiceClient {
    */
   async searchAndAsk(searchQuery: string, prompt?: string): Promise<string> {
     const context = await this.ensureInitialized();
+    const metricsStart = Date.now();
+
+    setGauge(
+      'context_engine_search_and_ask_queue_depth',
+      undefined,
+      this.searchQueue.length,
+      'Number of searchAndAsk requests waiting in the queue.'
+    );
+    incCounter('context_engine_search_and_ask_total', undefined, 1, 'Total searchAndAsk calls.');
 
     // Use the search queue to serialize searchAndAsk calls
     // This prevents potential SDK concurrency issues while allowing
     // other operations (file reads, semantic search) to run in parallel
-    return this.searchQueue.enqueue(async () => {
-      try {
-        const queueLength = this.searchQueue.length;
-        console.error(`[searchAndAsk] Searching for: ${searchQuery}${queueLength > 0 ? ` (queue: ${queueLength} waiting)` : ''}`);
-        console.error(`[searchAndAsk] Prompt: ${prompt?.substring(0, 100) || '(using search query)'}`);
+    try {
+      const response = await this.searchQueue.enqueue(async () => {
+        try {
+          const queueLength = this.searchQueue.length;
+          console.error(`[searchAndAsk] Searching for: ${searchQuery}${queueLength > 0 ? ` (queue: ${queueLength} waiting)` : ''}`);
+          console.error(`[searchAndAsk] Prompt: ${prompt?.substring(0, 100) || '(using search query)'}`);
 
-        // Use the SDK's searchAndAsk method
-        const response = await context.searchAndAsk(searchQuery, prompt);
+          // Use the SDK's searchAndAsk method
+          const innerResponse = await context.searchAndAsk(searchQuery, prompt);
 
-        console.error(`[searchAndAsk] Response length: ${response?.length || 0}`);
+          console.error(`[searchAndAsk] Response length: ${innerResponse?.length || 0}`);
 
-        return response;
-      } catch (error) {
-        console.error('[searchAndAsk] Failed:', error);
-        throw error;
-      }
-    });
+          return innerResponse;
+        } catch (error) {
+          console.error('[searchAndAsk] Failed:', error);
+          throw error;
+        }
+      });
+      observeDurationMs(
+        'context_engine_search_and_ask_duration_seconds',
+        { result: 'success' },
+        Date.now() - metricsStart,
+        { help: 'searchAndAsk end-to-end duration in seconds (includes queue wait time).' }
+      );
+      return response;
+    } catch (e) {
+      incCounter('context_engine_search_and_ask_errors_total', undefined, 1, 'Total searchAndAsk failures.');
+      observeDurationMs(
+        'context_engine_search_and_ask_duration_seconds',
+        { result: 'error' },
+        Date.now() - metricsStart,
+        { help: 'searchAndAsk end-to-end duration in seconds (includes queue wait time).' }
+      );
+      throw e;
+    } finally {
+      setGauge(
+        'context_engine_search_and_ask_queue_depth',
+        undefined,
+        this.searchQueue.length,
+        'Number of searchAndAsk requests waiting in the queue.'
+      );
+    }
   }
 
   /**
@@ -3000,6 +3103,18 @@ export class ContextServiceClient {
       if (persistentCacheKey) {
         const persistent = this.getPersistentContextBundle(persistentCacheKey);
         if (persistent) {
+          incCounter(
+            'context_engine_get_context_for_prompt_total',
+            { cache: 'persistent' },
+            1,
+            'Total getContextForPrompt calls (labeled by cache path).'
+          );
+          observeDurationMs(
+            'context_engine_get_context_for_prompt_duration_seconds',
+            { cache: 'persistent' },
+            Date.now() - startTime,
+            { help: 'getContextForPrompt end-to-end duration in seconds (includes cache hits).' }
+          );
           return persistent;
         }
       }
@@ -3189,6 +3304,18 @@ export class ContextServiceClient {
     if (!bypassCache && persistentCacheKey) {
       this.setPersistentContextBundle(persistentCacheKey, bundle);
     }
+    incCounter(
+      'context_engine_get_context_for_prompt_total',
+      { cache: 'miss' },
+      1,
+      'Total getContextForPrompt calls (labeled by cache path).'
+    );
+    observeDurationMs(
+      'context_engine_get_context_for_prompt_duration_seconds',
+      { cache: 'miss' },
+      Date.now() - startTime,
+      { help: 'getContextForPrompt end-to-end duration in seconds (includes cache hits).' }
+    );
     return bundle;
   }
 

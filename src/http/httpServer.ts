@@ -12,7 +12,9 @@
 
 import express, { type Express } from 'express';
 import type { Server } from 'http';
+import { featureEnabled } from '../config/features.js';
 import type { ContextServiceClient } from '../mcp/serviceClient.js';
+import { renderPrometheusMetrics } from '../metrics/metrics.js';
 import {
     createCorsMiddleware,
     loggingMiddleware,
@@ -66,6 +68,19 @@ export class ContextEngineHttpServer {
         // Health endpoint at root level
         app.use(createHealthRouter(this.version));
 
+        // Optional Prometheus-style metrics endpoint
+        if (featureEnabled('metrics') && featureEnabled('http_metrics')) {
+            app.get('/metrics', (_req, res) => {
+                try {
+                    res.setHeader('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+                    res.send(renderPrometheusMetrics());
+                } catch (error) {
+                    console.error('[HTTP] Metrics rendering failed:', error);
+                    res.status(500).send('Internal Server Error');
+                }
+            });
+        }
+
         // API routes under /api/v1
         app.use('/api/v1', createStatusRouter(this.serviceClient));
         app.use('/api/v1', createToolsRouter(this.serviceClient));
@@ -86,6 +101,9 @@ export class ContextEngineHttpServer {
                     console.error(`[HTTP] Server listening on http://localhost:${this.port}`);
                     console.error(`[HTTP] Health: http://localhost:${this.port}/health`);
                     console.error(`[HTTP] API: http://localhost:${this.port}/api/v1/`);
+                    if (featureEnabled('metrics') && featureEnabled('http_metrics')) {
+                        console.error(`[HTTP] Metrics: http://localhost:${this.port}/metrics`);
+                    }
                     resolve();
                 });
 
