@@ -44,7 +44,7 @@ export async function handleIndexWorkspace(
       }, null, 2);
     }
 
-    await serviceClient.indexWorkspace();
+    const result = await serviceClient.indexWorkspace();
     
     const elapsed = Date.now() - startTime;
     
@@ -52,6 +52,11 @@ export async function handleIndexWorkspace(
       success: true,
       message: `Workspace indexed successfully in ${elapsed}ms`,
       elapsed_ms: elapsed,
+      indexed: result.indexed,
+      skipped: result.skipped,
+      total_indexable: result.totalIndexable,
+      unchanged_skipped: result.unchangedSkipped,
+      errors: result.errors,
     }, null, 2);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
