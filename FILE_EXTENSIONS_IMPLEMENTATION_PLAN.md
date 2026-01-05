@@ -471,7 +471,7 @@ mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
 # Create test files with fake credentials
-echo "DATABASE_URL=postgres://admin:secret@localhost/db" > .env.local
+echo "DATABASE_URL=postgres://localhost/db" > .env.local
 echo "API_KEY=sk_live_fake_key_12345" > .env.development
 echo "SECRET_TOKEN=production_secret_token" > .env.production
 echo "EXAMPLE_KEY=this_is_safe_to_index" > .env.example
@@ -692,4 +692,3 @@ After deployment, monitor for:
 **Ready for Implementation**: YES
 **Estimated Total Time**: ~4.5 hours
 **Risk Level**: Low
-

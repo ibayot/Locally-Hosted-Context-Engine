@@ -21,6 +21,7 @@ build/
 .augment-context-cache.json
 .augment-index-state.json
 .augment-plans/
+.context-engine/
 
 # Personal planning notes
 plan/

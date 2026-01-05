@@ -27,20 +27,20 @@ Environment files (`.env.local`, `.env.development`, `.env.production`) typicall
 #### Example of Sensitive `.env.production` Content
 ```bash
 # Database
-DATABASE_URL=postgresql://admin:SuperSecret123@prod-db.company.com:5432/maindb
+DATABASE_URL=postgresql://prod-db.company.com:5432/maindb  # credentials omitted
 
 # API Keys
-STRIPE_SECRET_KEY=sk_live_51H...
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=wJalrXUtn...
+STRIPE_SECRET_KEY=<redacted>
+AWS_ACCESS_KEY_ID=<redacted>
+AWS_SECRET_ACCESS_KEY=<redacted>
 
 # Authentication
-JWT_SECRET=a8f5f167f44f4964e6c998dee827110c
-SESSION_SECRET=keyboard_cat_production_2024
+JWT_SECRET=<redacted>
+SESSION_SECRET=<redacted>
 
 # Third-party Services
-SENDGRID_API_KEY=SG.abc123...
-OPENAI_API_KEY=sk-proj-...
+SENDGRID_API_KEY=<redacted>
+OPENAI_API_KEY=<redacted>
 ```
 
 **Risk**: If indexed, these credentials could be:
@@ -363,4 +363,3 @@ private async discoverFiles(dirPath: string, relativeTo: string = dirPath): Prom
 **Date**: 2025-12-22  
 **Severity**: HIGH  
 **Status**: DOCUMENTATION ERROR IDENTIFIED - NO CODE VULNERABILITY
-

@@ -176,6 +176,7 @@ tmp/
 
 # === State Files ===
 .augment-context-state.json
+.context-engine/
 
 # === Modern Build Tool Caches ===
 .next/
