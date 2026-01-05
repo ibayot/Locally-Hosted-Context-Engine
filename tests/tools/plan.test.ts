@@ -5,6 +5,9 @@
  */
 
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import {
   handleCreatePlan,
   handleRefinePlan,
@@ -16,6 +19,7 @@ import {
   executePlanTool,
 } from '../../src/mcp/tools/plan.js';
 import { EnhancedPlanOutput } from '../../src/mcp/types/planning.js';
+import { PlanPersistenceService } from '../../src/mcp/services/planPersistenceService.js';
 
 describe('Planning MCP Tools', () => {
   let mockServiceClient: any;
@@ -220,6 +224,46 @@ describe('Planning MCP Tools', () => {
         ).rejects.toThrow(/valid JSON/i);
       });
 
+      it('should load plan by plan_id when JSON not provided', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-plan-'));
+        const plan: EnhancedPlanOutput = {
+          id: 'plan_test',
+          version: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          goal: 'Test plan',
+          scope: { included: [], excluded: [], assumptions: [], constraints: [] },
+          mvp_features: [],
+          nice_to_have_features: [],
+          architecture: { notes: '', patterns_used: [], diagrams: [] },
+          risks: [],
+          milestones: [],
+          steps: [],
+          dependency_graph: { nodes: [], edges: [], critical_path: [], parallel_groups: [], execution_order: [] },
+          testing_strategy: { unit: '', integration: '', coverage_target: '80%' },
+          acceptance_criteria: [],
+          confidence_score: 0.5,
+          questions_for_clarification: [],
+          context_files: [],
+          codebase_insights: [],
+        };
+        const persistence = new PlanPersistenceService(tempDir);
+        await persistence.savePlan(plan, { overwrite: true });
+
+        const serviceClientWithWorkspace = {
+          ...mockServiceClient,
+          getWorkspacePath: () => tempDir,
+        };
+
+        const result = await handleExecutePlan(
+          { plan: '', plan_id: plan.id, mode: 'full_plan' },
+          serviceClientWithWorkspace
+        );
+        const parsed = JSON.parse(result);
+        expect(parsed.success).toBe(true);
+        expect(parsed.plan_id).toBe(plan.id);
+      });
+
       it('should reject single_step mode without step_number', async () => {
         const validPlan = JSON.stringify({ id: 'test', version: 1, steps: [] });
         await expect(
@@ -239,7 +283,7 @@ describe('Planning MCP Tools', () => {
       });
 
       it('should require plan parameter', () => {
-        expect(executePlanTool.inputSchema.required).toContain('plan');
+        expect(executePlanTool.inputSchema.required).not.toContain('plan');
       });
 
       it('should define mode enum', () => {
@@ -251,6 +295,7 @@ describe('Planning MCP Tools', () => {
 
       it('should define optional parameters', () => {
         const props = executePlanTool.inputSchema.properties;
+        expect(props.plan_id).toBeDefined();
         expect(props.step_number).toBeDefined();
         expect(props.apply_changes).toBeDefined();
         expect(props.max_steps).toBeDefined();
@@ -260,4 +305,3 @@ describe('Planning MCP Tools', () => {
     });
   });
 });
-

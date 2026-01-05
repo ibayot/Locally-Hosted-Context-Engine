@@ -77,6 +77,14 @@ export interface CreatePlanArgs {
   generate_diagrams?: boolean;
   /** Focus on MVP only (default: false) */
   mvp_only?: boolean;
+  /** Persist the generated plan for later use (default: true) */
+  auto_save?: boolean;
+  /** Optional custom name for saved plan */
+  save_name?: string;
+  /** Optional tags for saved plan */
+  save_tags?: string[];
+  /** Overwrite existing plan with same ID when auto-saving */
+  save_overwrite?: boolean;
 }
 
 export interface RefinePlanArgs {
@@ -99,7 +107,9 @@ export interface VisualizePlanArgs {
 
 export interface ExecutePlanArgs {
   /** The plan to execute (JSON string) */
-  plan: string;
+  plan?: string;
+  /** Optional plan ID to load from persisted storage */
+  plan_id?: string;
   /** Execution mode: 'single_step', 'all_ready', or 'full_plan' */
   mode?: ExecutionMode;
   /** Specific step number to execute (required for single_step mode) */
@@ -125,7 +135,17 @@ export async function handleCreatePlan(
   args: CreatePlanArgs,
   serviceClient: ContextServiceClient
 ): Promise<string> {
-  const { task, max_context_files, context_token_budget, generate_diagrams, mvp_only } = args;
+  const {
+    task,
+    max_context_files,
+    context_token_budget,
+    generate_diagrams,
+    mvp_only,
+    auto_save = true,
+    save_name,
+    save_tags,
+    save_overwrite,
+  } = args;
 
   if (!task || typeof task !== 'string' || task.trim().length === 0) {
     throw new Error('Task is required and must be a non-empty string');
@@ -148,8 +168,39 @@ export async function handleCreatePlan(
     throw new Error(`Failed to generate plan: ${result.error}`);
   }
 
+  let persistence: { saved: boolean; plan_id?: string; file_path?: string; error?: string } | undefined;
+  if (auto_save && result.plan) {
+    try {
+      const workspacePath = typeof serviceClient.getWorkspacePath === 'function'
+        ? serviceClient.getWorkspacePath()
+        : null;
+      if (!workspacePath) {
+        persistence = { saved: false, error: 'Plan persistence unavailable (workspace path missing)' };
+        return formatPlanResult(result, persistence);
+      }
+      const { PlanPersistenceService } = await import('../services/planPersistenceService.js');
+      const service = new PlanPersistenceService(workspacePath);
+      const saved = await service.savePlan(result.plan, {
+        name: save_name,
+        tags: save_tags,
+        overwrite: save_overwrite,
+      });
+      persistence = {
+        saved: saved.success,
+        plan_id: saved.plan_id,
+        file_path: saved.file_path,
+        error: saved.error,
+      };
+    } catch (error) {
+      persistence = {
+        saved: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
   // Format the result for output
-  return formatPlanResult(result);
+  return formatPlanResult(result, persistence);
 }
 
 /**
@@ -455,6 +506,7 @@ export async function handleExecutePlan(
 ): Promise<string> {
   const {
     plan: planJson,
+    plan_id,
     mode = 'single_step',
     step_number,
     apply_changes = false,
@@ -463,16 +515,33 @@ export async function handleExecutePlan(
     additional_context,
   } = args;
 
-  // Validate plan JSON
-  if (!planJson || typeof planJson !== 'string' || planJson.trim().length === 0) {
-    throw new Error('Plan is required and must be a non-empty JSON string');
+  // Resolve plan from JSON or persisted plan ID
+  let plan: EnhancedPlanOutput | null = null;
+
+  const workspacePath = typeof serviceClient.getWorkspacePath === 'function'
+    ? serviceClient.getWorkspacePath()
+    : null;
+
+  if (planJson && typeof planJson === 'string' && planJson.trim().length > 0) {
+    try {
+      plan = JSON.parse(planJson);
+    } catch {
+      if (!plan_id && workspacePath) {
+        const { PlanPersistenceService } = await import('../services/planPersistenceService.js');
+        const service = new PlanPersistenceService(workspacePath);
+        plan = await service.loadPlan(planJson.trim());
+      }
+    }
   }
 
-  let plan: EnhancedPlanOutput;
-  try {
-    plan = JSON.parse(planJson);
-  } catch (error) {
-    throw new Error('Plan must be valid JSON');
+  if (!plan && plan_id && workspacePath) {
+    const { PlanPersistenceService } = await import('../services/planPersistenceService.js');
+    const service = new PlanPersistenceService(workspacePath);
+    plan = await service.loadPlan(plan_id);
+  }
+
+  if (!plan) {
+    throw new Error('Plan is required and must be valid JSON or a valid plan_id');
   }
 
   // Validate mode-specific requirements
@@ -734,7 +803,10 @@ function formatExecutionResult(result: ExecutePlanResult, applyChanges: boolean)
 /**
  * Format a plan result for output
  */
-function formatPlanResult(result: PlanResult): string {
+function formatPlanResult(
+  result: PlanResult,
+  persistence?: { saved: boolean; plan_id?: string; file_path?: string; error?: string }
+): string {
   if (!result.plan) {
     return JSON.stringify({
       success: result.success,
@@ -763,7 +835,18 @@ function formatPlanResult(result: PlanResult): string {
   output += `**Version:** ${plan.version || 1}\n`;
   output += `**Status:** ${result.status || 'unknown'}\n`;
   output += `**Confidence:** ${((plan.confidence_score || 0) * 100).toFixed(0)}%\n`;
-  output += `**Generated in:** ${result.duration_ms || 0}ms\n\n`;
+  output += `**Generated in:** ${result.duration_ms || 0}ms\n`;
+  if (persistence) {
+    const status = persistence.saved ? '✅ Saved' : '⚠️ Not saved';
+    const id = persistence.plan_id || plan.id || 'unknown';
+    output += `**Persistence:** ${status} (ID: ${id})\n`;
+    if (!persistence.saved && persistence.error) {
+      output += `**Save Error:** ${persistence.error}\n`;
+    }
+    output += '\n';
+  } else {
+    output += '\n';
+  }
 
   output += `## Goal\n${plan.goal || 'No goal specified'}\n\n`;
 
@@ -939,7 +1022,8 @@ This tool enters Planning Mode, where it:
 - Testing strategy recommendations
 - Confidence score and clarifying questions
 
-The plan output includes both a human-readable summary and full JSON for programmatic use.`,
+The plan output includes both a human-readable summary and full JSON for programmatic use.
+By default, plans are persisted so they can be executed later via plan_id.`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -965,6 +1049,25 @@ The plan output includes both a human-readable summary and full JSON for program
       mvp_only: {
         type: 'boolean',
         description: 'Focus on MVP features only, excluding nice-to-have (default: false)',
+        default: false,
+      },
+      auto_save: {
+        type: 'boolean',
+        description: 'Persist the generated plan for later use (default: true)',
+        default: true,
+      },
+      save_name: {
+        type: 'string',
+        description: 'Optional custom name for the saved plan',
+      },
+      save_tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Optional tags for the saved plan',
+      },
+      save_overwrite: {
+        type: 'boolean',
+        description: 'Overwrite existing plan with same ID when auto-saving (default: false)',
         default: false,
       },
     },
@@ -1069,6 +1172,8 @@ This tool orchestrates the execution of plan steps, using AI to generate the act
 - Next steps that are ready to execute
 - Overall progress tracking
 
+You can pass a saved plan_id instead of the full plan JSON.
+
 **Important:**
 - By default, changes are shown as preview only (apply_changes=false)
 - Set apply_changes=true to actually write the generated code to files
@@ -1078,7 +1183,11 @@ This tool orchestrates the execution of plan steps, using AI to generate the act
     properties: {
       plan: {
         type: 'string',
-        description: 'The plan as a JSON string (from create_plan output)',
+        description: 'The plan as a JSON string (from create_plan output). Optional if plan_id is provided.',
+      },
+      plan_id: {
+        type: 'string',
+        description: 'Plan ID to load from saved plans (alternative to providing plan JSON)',
       },
       mode: {
         type: 'string',
@@ -1110,7 +1219,6 @@ This tool orchestrates the execution of plan steps, using AI to generate the act
         description: 'Additional context to provide to the AI for code generation',
       },
     },
-    required: ['plan'],
+    required: [],
   },
 };
-
