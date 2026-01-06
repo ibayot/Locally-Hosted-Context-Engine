@@ -18,7 +18,7 @@
  *          Specifically, investigate the login function in src/auth/login.ts
  *          which handles JWT token validation and session management..."
  *
- * Note: Always uses AI mode. Requires authentication (auggie login).
+ * Note: Always uses AI mode. Requires configured AI model.
  */
 
 import { ContextServiceClient } from '../serviceClient.js';
@@ -70,7 +70,7 @@ export const enhancePromptTool = {
 This tool follows Augment's Prompt Enhancer pattern:
 - Uses Augment's LLM API (searchAndAsk) for intelligent prompt rewriting
 - Produces natural language enhancement with codebase context
-- Requires network access and authentication (auggie login)
+- Requires configured AI model
 
 Example:
   Input:  { prompt: "fix the login bug" }

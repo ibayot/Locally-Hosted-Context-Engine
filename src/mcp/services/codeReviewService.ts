@@ -240,7 +240,7 @@ export class CodeReviewService {
     return {
       reviewed_at: new Date().toISOString(),
       review_duration_ms: Date.now() - startTime,
-      model_used: 'auggie-context-engine',
+      model_used: 'local-context-engine',
       tool_version: TOOL_VERSION,
       findings_filtered: findingsFiltered,
       confidence_threshold: opts.confidence_threshold,

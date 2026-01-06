@@ -86,6 +86,8 @@ import {
   handleScrubSecrets,
   handleValidateContent,
 } from './tools/reactiveReview.js';
+import { getBmadGuidelinesTool, handleGetBmadGuidelines } from './tools/bmad.js';
+import { scanSecurityTool, handleScanSecurity } from './tools/security.js';
 import { FileWatcher } from '../watcher/index.js';
 
 export class ContextEngineMCPServer {
@@ -241,7 +243,8 @@ export class ContextEngineMCPServer {
     console.error(`[watcher] Detected ${burstCount} deletions; scheduling full reindex to prevent stale results`);
     this.lastReindexAt = Date.now();
 
-    this.reindexInFlight = this.serviceClient.indexWorkspaceInBackground()
+    this.reindexInFlight = this.serviceClient.indexWorkspace()
+      .then(() => { })
       .catch((e) => {
         console.error('[watcher] Background reindex after deletions failed:', e);
       })
@@ -331,6 +334,9 @@ export class ContextEngineMCPServer {
           runStaticAnalysisTool,
           // Reactive Review tools (Phase 4)
           ...reactiveReviewTools,
+          // New Tools (v3.0)
+          getBmadGuidelinesTool,
+          scanSecurityTool,
         ],
       };
     });
@@ -518,6 +524,15 @@ export class ContextEngineMCPServer {
 
           case 'validate_content':
             result = await handleValidateContent(args as any);
+            break;
+
+          // New Tools (v3.0)
+          case 'get_bmad_guidelines':
+            result = await handleGetBmadGuidelines(args as any);
+            break;
+
+          case 'scan_security':
+            result = await handleScanSecurity(args as any, this.workspacePath);
             break;
 
           default:

@@ -102,7 +102,7 @@ export async function internalPromptEnhancer(
     // Check for authentication errors
     if (errorMessage.includes('API key') || errorMessage.includes('authentication') || errorMessage.includes('Login')) {
       throw new Error(
-        'AI enhancement requires authentication. Please run \"auggie login\" or set AUGMENT_API_TOKEN environment variable.'
+        'AI enhancement unavailable: Authentication failed or model not configured.'
       );
     }
 

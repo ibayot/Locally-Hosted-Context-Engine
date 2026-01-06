@@ -22,9 +22,9 @@ export async function handleIndexWorkspace(
   serviceClient: ContextServiceClient
 ): Promise<string> {
   const { force = false, background = false } = args;
-  
+
   const startTime = Date.now();
-  
+
   try {
     console.error(`[index_workspace] Starting workspace indexing (force=${force})...`);
 
@@ -34,8 +34,8 @@ export async function handleIndexWorkspace(
     }
 
     if (background) {
-      // Fire and forget background worker
-      serviceClient.indexWorkspaceInBackground().catch((error) => {
+      // Fire and forget (async)
+      serviceClient.indexWorkspace().catch((error) => {
         console.error('[index_workspace] Background indexing failed:', error);
       });
       return JSON.stringify({
@@ -45,9 +45,9 @@ export async function handleIndexWorkspace(
     }
 
     const result = await serviceClient.indexWorkspace();
-    
+
     const elapsed = Date.now() - startTime;
-    
+
     return JSON.stringify({
       success: true,
       message: `Workspace indexed successfully in ${elapsed}ms`,
@@ -61,7 +61,7 @@ export async function handleIndexWorkspace(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(`[index_workspace] Failed: ${errorMessage}`);
-    
+
     throw new Error(`Failed to index workspace: ${errorMessage}`);
   }
 }
@@ -119,7 +119,6 @@ and will be automatically restored on future server starts.`,
       },
       background: {
         type: 'boolean',
-        description: 'Run indexing in a background worker thread (non-blocking)',
         default: false,
       },
     },

@@ -3,7 +3,7 @@
  *
  * Service layer for AI-powered software planning and architecture design.
  * Integrates with the ContextServiceClient to leverage codebase context
- * and uses the Auggie SDK's searchAndAsk for AI-powered plan generation.
+ * and uses the Context Service's searchAndAsk for AI-powered plan generation.
  *
  * Responsibilities:
  * - Generate structured implementation plans
@@ -511,10 +511,10 @@ export class PlanningService {
       patterns_used: this.validateStringArray(a.patterns_used),
       diagrams: Array.isArray(a.diagrams)
         ? a.diagrams.map(d => ({
-            type: String(d?.type || 'architecture') as 'architecture',
-            title: String(d?.title || ''),
-            mermaid: String(d?.mermaid || ''),
-          }))
+          type: String(d?.type || 'architecture') as 'architecture',
+          title: String(d?.title || ''),
+          mermaid: String(d?.mermaid || ''),
+        }))
         : [],
     };
   }

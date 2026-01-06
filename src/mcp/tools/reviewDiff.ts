@@ -55,7 +55,7 @@ export async function handleReviewDiff(
       readFile: (filePath: string) => serviceClient.getFile(filePath),
       llm: {
         call: (searchQuery: string, prompt: string) => serviceClient.searchAndAsk(searchQuery, prompt),
-        model: 'auggie-context-engine',
+        model: 'local-context-engine',
       },
     },
   };

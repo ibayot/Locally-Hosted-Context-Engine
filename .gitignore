@@ -22,6 +22,7 @@ build/
 .augment-index-state.json
 .augment-plans/
 .context-engine/
+.local-context/
 
 # Personal planning notes
 plan/

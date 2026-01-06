@@ -1,7 +1,7 @@
 /**
  * Layer 2: Context Service Layer
  *
- * This layer adapts raw retrieval from the Auggie SDK (Layer 1)
+ * This layer adapts raw retrieval from the Local Context Service (Layer 1)
  * into agent-friendly context bundles optimized for prompt enhancement.
  *
  * Responsibilities:
@@ -14,15 +14,13 @@
  * - Manage token budgets for LLM context windows
  */
 
-import { DirectContext } from '@augmentcode/auggie-sdk';
+import { LocalContextService } from '../local/service.js';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { minimatch } from 'minimatch';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
-import { Worker } from 'worker_threads';
-import type { WorkerMessage } from '../worker/messages.js';
 import { featureEnabled } from '../config/features.js';
 import { envMs } from '../config/env.js';
 import { incCounter, observeDurationMs, setGauge } from '../metrics/metrics.js';
@@ -248,7 +246,7 @@ const MEMORIES_DIR = '.memories';
 /**
  * Queue for serializing searchAndAsk calls to prevent SDK concurrency issues.
  *
- * The Auggie SDK's DirectContext may not be thread-safe for concurrent
+ * The underlying context service may not be thread-safe for concurrent
  * searchAndAsk calls. This queue ensures only one call runs at a time
  * while allowing other operations to continue.
  *
@@ -755,7 +753,7 @@ interface IndexFingerprintFile {
 
 export class ContextServiceClient {
   private workspacePath: string;
-  private context: DirectContext | null = null;
+  private context: LocalContextService | null = null;
   private initPromise: Promise<void> | null = null;
   private indexChain: Promise<void> = Promise.resolve();
   private indexStateStore: JsonIndexStateStore | null = null;
@@ -1059,7 +1057,7 @@ export class ContextServiceClient {
    * Initialize the DirectContext SDK
    * Tries to restore from saved state if available
    */
-  private async ensureInitialized(options?: { skipAutoIndex?: boolean }): Promise<DirectContext> {
+  private async ensureInitialized(options?: { skipAutoIndex?: boolean }): Promise<LocalContextService> {
     if (this.context) {
       return this.context;
     }
@@ -1087,106 +1085,6 @@ export class ContextServiceClient {
     return run;
   }
 
-  private async runIndexWorker(files?: string[]): Promise<IndexResult> {
-    const startTime = Date.now();
-    return new Promise<IndexResult>((resolve, reject) => {
-      const workerSpec = this.getIndexWorkerSpec();
-      if (!workerSpec) {
-        reject(new Error('Index worker unavailable: missing built worker (dist/worker/IndexWorker.js) and tsx loader is not installed/resolvable.'));
-        return;
-      }
-      const worker = new Worker(workerSpec.url, {
-        execArgv: workerSpec.execArgv,
-        workerData: {
-          workspacePath: this.workspacePath,
-          files,
-        },
-      });
-
-      let done = false;
-      const finalize = async (fn: () => void): Promise<void> => {
-        if (done) return;
-        done = true;
-        try {
-          await worker.terminate();
-        } catch {
-          // ignore
-        }
-        fn();
-      };
-
-      worker.on('message', (message: WorkerMessage) => {
-        if (message.type === 'index_complete') {
-          void finalize(() => {
-            resolve({
-              indexed: message.count,
-              skipped: message.skipped ?? 0,
-              errors: message.errors ?? [],
-              duration: message.duration ?? (Date.now() - startTime),
-              totalIndexable: message.totalIndexable,
-              unchangedSkipped: message.unchangedSkipped,
-            });
-          });
-        } else if (message.type === 'index_error') {
-          void finalize(() => {
-            reject(new Error(message.error));
-          });
-        }
-      });
-
-      worker.on('error', (error) => {
-        void finalize(() => {
-          reject(error);
-        });
-      });
-
-      worker.on('exit', (code) => {
-        if (done) return;
-        if (code !== 0) {
-          void finalize(() => {
-            reject(new Error(`Index worker exited with code ${code}`));
-          });
-        } else {
-          void finalize(() => {
-            resolve({
-              indexed: 0,
-              skipped: 0,
-              errors: [],
-              duration: Date.now() - startTime,
-            });
-          });
-        }
-      });
-    });
-  }
-
-  private getIndexWorkerSpec(): { url: URL; execArgv?: string[] } | null {
-    const jsUrl = new URL('../worker/IndexWorker.js', import.meta.url);
-    const jsPath = fileURLToPath(jsUrl);
-    if (fs.existsSync(jsPath)) {
-      return { url: jsUrl };
-    }
-
-    // Development / tsx execution: spawn the TS worker with tsx loader.
-    // Important: resolve tsx relative to THIS package, not process.cwd(),
-    // since some clients (e.g. GUI wrappers) run with a different cwd.
-    const require = createRequire(import.meta.url);
-    let tsxEntrypoint: string | null = null;
-    try {
-      tsxEntrypoint = require.resolve('tsx');
-    } catch {
-      tsxEntrypoint = null;
-    }
-
-    if (!tsxEntrypoint) {
-      return null;
-    }
-
-    return {
-      url: new URL('../worker/IndexWorker.dev.ts', import.meta.url),
-      execArgv: ['--import', tsxEntrypoint],
-    };
-  }
 
   private async doInitialize(options?: { skipAutoIndex?: boolean }): Promise<void> {
     const stateFilePath = this.getStateFilePath();
@@ -1204,8 +1102,10 @@ export class ContextServiceClient {
       // Try to restore from saved state
       if (fs.existsSync(stateFilePath)) {
         console.error(`Restoring context from ${stateFilePath}`);
-        this.context = await DirectContext.importFromFile(stateFilePath);
-        this.restoredFromStateFile = true;
+        // LocalContextService loads its own state on create(), so we skip explicit import here.
+        // We might just log that we found a state file but let create() handle it.
+        console.log('[LocalContextService] State file exists, will be loaded during creation.');
+        // throw new Error('Skipping importFromFile for local mode');
         console.error('Context restored successfully');
         try {
           const stats = fs.statSync(stateFilePath);
@@ -1238,23 +1138,13 @@ export class ContextServiceClient {
     }
 
     // Create new context
-    console.error('Creating new DirectContext');
+    console.error('Initializing Local Context Engine...');
     try {
-      this.context = await DirectContext.create();
+      this.context = await LocalContextService.create(this.workspacePath);
+      console.error('[Local] LocalContextService initialized successfully.');
       this.restoredFromStateFile = false;
-      console.error('DirectContext created successfully');
     } catch (createError) {
-      console.error('Failed to create DirectContext:', createError);
-      // Check if this is an API/authentication error
-      const errorMessage = String(createError);
-      if (errorMessage.includes('invalid character') || errorMessage.includes('Login')) {
-        console.error('\n*** AUTHENTICATION ERROR ***');
-        console.error('The API returned an invalid response. Please check:');
-        console.error('1. AUGMENT_API_TOKEN is set correctly');
-        console.error('2. AUGMENT_API_URL is set correctly');
-        console.error('3. Your API token has not expired');
-        console.error('');
-      }
+      console.error('Failed to create Local Context Engine:', createError);
       throw createError;
     }
 
@@ -1839,286 +1729,271 @@ export class ContextServiceClient {
    * Index the workspace directory using DirectContext SDK
    */
   async indexWorkspace(): Promise<IndexResult> {
+    // If using Local Context Service, delegate to its index method
+    const context = await this.ensureInitialized({ skipAutoIndex: true });
+    if (context instanceof LocalContextService) {
+      console.error('[indexWorkspace] Utilizing Local Context Engine...');
+      try {
+        await context.index();
+        this.updateIndexStatus({
+          status: 'idle',
+          lastIndexed: new Date().toISOString(),
+          fileCount: (context as any).store?.chunks?.length || 0, // Approximate
+        });
+        return {
+          indexed: (context as any).store?.chunks?.length || 0,
+          skipped: 0,
+          errors: [],
+          duration: 0,
+        };
+      } catch (err) {
+        console.error('[indexWorkspace] Local indexing failed:', err);
+        this.updateIndexStatus({
+          status: 'error',
+          lastError: String(err),
+        });
+        throw err;
+      }
+    }
+
     return this.enqueueIndexing(async () => {
       const startTime = Date.now();
       let metricsResult: 'success' | 'error' = 'success';
       try {
 
-	    if (this.isOfflineMode()) {
-	      const message = 'Indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
-	      console.error(message);
-	      this.updateIndexStatus({ status: 'error', lastError: message });
-	      throw new Error(message);
-	    }
-
-      this.updateIndexStatus({ status: 'indexing', lastError: undefined });
-      console.error(`Indexing workspace: ${this.workspacePath}`);
-      console.error(`API URL: ${process.env.AUGMENT_API_URL || '(default)'}`);
-      console.error(`API Token: ${process.env.AUGMENT_API_TOKEN ? '(set)' : '(NOT SET)'}`);
-
-      const debugIndex = process.env.CE_DEBUG_INDEX === 'true';
-
-      const useWorker =
-        process.env.CE_INDEX_USE_WORKER !== 'false' &&
-        // Avoid worker-based indexing in Jest unit tests (worker won't inherit mocks).
-        !process.env.JEST_WORKER_ID;
-
-      if (useWorker) {
-        let result: IndexResult | null = null;
-        try {
-          result = await this.runIndexWorker();
-        } catch (e) {
-          console.error('[indexWorkspace] Worker indexing unavailable; falling back to in-process indexing:', e);
-          result = null;
+        if (this.isOfflineMode()) {
+          const message = 'Indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
+          console.error(message);
+          this.updateIndexStatus({ status: 'error', lastError: message });
+          throw new Error(message);
         }
 
-        if (!result) {
-          // fall through to in-process path
-        } else {
+        this.updateIndexStatus({ status: 'indexing', lastError: undefined });
+        console.error(`Indexing workspace: ${this.workspacePath}`);
+        console.error(`API URL: ${process.env.AUGMENT_API_URL || '(default)'}`);
+        console.error(`API Token: ${process.env.AUGMENT_API_TOKEN ? '(set)' : '(NOT SET)'}`);
 
-          if (result.indexed > 0) {
-            this.updateIndexStatus({
-              status: result.errors.length ? 'error' : 'idle',
-              lastIndexed: new Date().toISOString(),
-              fileCount: result.totalIndexable ?? result.indexed,
-              lastError: result.errors.length ? result.errors[result.errors.length - 1] : undefined,
-            });
-          } else {
-            this.updateIndexStatus({
-              status: result.errors.length ? 'error' : 'idle',
-              lastIndexed: new Date().toISOString(),
-              fileCount: result.totalIndexable ?? 0,
-              lastError: result.errors[0],
-            });
-          }
+        const debugIndex = process.env.CE_DEBUG_INDEX === 'true';
 
-          // Ensure the in-memory context reflects the worker-written state file.
-          this.context = null;
-          this.initPromise = null;
-          this.clearCache();
-          await this.ensureInitialized({ skipAutoIndex: true });
 
-          return result;
+
+        const context = await this.ensureInitialized({ skipAutoIndex: true });
+
+        // Discover all indexable files
+        const filePaths = await this.discoverFiles(this.workspacePath);
+        console.error(`Found ${filePaths.length} files to index`);
+
+        if (filePaths.length === 0) {
+          console.error('No indexable files found');
+          this.updateIndexStatus({
+            status: 'error',
+            lastError: 'No indexable files found',
+            fileCount: 0,
+          });
+          return {
+            indexed: 0,
+            skipped: 0,
+            errors: ['No indexable files found'],
+            duration: Date.now() - startTime,
+          };
         }
-      }
 
-      const context = await this.ensureInitialized({ skipAutoIndex: true });
-
-    // Discover all indexable files
-    const filePaths = await this.discoverFiles(this.workspacePath);
-    console.error(`Found ${filePaths.length} files to index`);
-
-    if (filePaths.length === 0) {
-      console.error('No indexable files found');
-      this.updateIndexStatus({
-        status: 'error',
-        lastError: 'No indexable files found',
-        fileCount: 0,
-      });
-      return {
-        indexed: 0,
-        skipped: 0,
-        errors: ['No indexable files found'],
-        duration: Date.now() - startTime,
-      };
-    }
-
-    if (debugIndex) {
-      // Log all discovered files for debugging (only first 50 to avoid log spam)
-      console.error('Files to index (showing first 50):');
-      for (const fp of filePaths.slice(0, 50)) {
-        console.error(`  - ${fp}`);
-      }
-      if (filePaths.length > 50) {
-        console.error(`  ... and ${filePaths.length - 50} more files`);
-      }
-    }
-
-    // STREAMING APPROACH: Read and index files in batches to minimize memory usage
-    // Instead of loading all files into memory, we read files just-in-time for each batch
-    const BATCH_SIZE = Number.parseInt(process.env.CE_INDEX_BATCH_SIZE ?? '10', 10) || 10;
-    const totalBatches = Math.ceil(filePaths.length / BATCH_SIZE);
-    let successCount = 0;
-    let errorCount = 0;
-    let skippedCount = 0;
-    let unchangedSkippedCount = 0;
-    const errors: string[] = [];
-    const successfulPaths: Set<string> = new Set();
-    const contentHashes: Map<string, string> = new Map();
-
-    const store = this.getIndexStateStore();
-    // Skipping unchanged files is only safe when we have an existing context restored from disk.
-    // Otherwise we could "skip" everything and end up with an empty index.
-    const skipUnchanged =
-      Boolean(store) && featureEnabled('skip_unchanged_indexing') && this.restoredFromStateFile;
-    const indexState: IndexStateFile | null = skipUnchanged && store ? store.load() : null;
-    const indexedAtIso = new Date().toISOString();
-
-    for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
-      const batchPaths = filePaths.slice(i, i + BATCH_SIZE);
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const isLastBatch = i + BATCH_SIZE >= filePaths.length;
-
-      // Read file contents for this batch only (streaming approach)
-      const batch: Array<{ path: string; contents: string }> = [];
-      for (const relativePath of batchPaths) {
-        const contents = this.readFileContents(relativePath);
-        if (contents !== null) {
-          if (skipUnchanged && indexState) {
-            const hash = this.hashContent(contents);
-            contentHashes.set(relativePath, hash);
-            const previous = indexState.files[relativePath]?.hash;
-            if (previous && previous === hash) {
-              unchangedSkippedCount++;
-              continue;
-            }
-          }
-          batch.push({ path: relativePath, contents });
-        } else {
-          skippedCount++;
-        }
-      }
-
-      if (batch.length === 0) {
-        console.error(`  Batch ${batchNum}/${totalBatches}: All files skipped`);
-        continue;
-      }
-
-      if (debugIndex) {
-        console.error(`\nIndexing batch ${batchNum}/${totalBatches}:`);
-        for (const file of batch) {
-          console.error(`  - ${file.path} (${file.contents.length} chars)`);
-        }
-      }
-
-      try {
-        // Don't wait for indexing on intermediate batches
-        await context.addToIndex(batch, { waitForIndexing: isLastBatch });
-        successCount += batch.length;
-        for (const file of batch) {
-          successfulPaths.add(file.path);
-          if (skipUnchanged && indexState && !contentHashes.has(file.path)) {
-            contentHashes.set(file.path, this.hashContent(file.contents));
-          }
-        }
         if (debugIndex) {
-          console.error(`  ✓ Batch ${batchNum} indexed successfully`);
+          // Log all discovered files for debugging (only first 50 to avoid log spam)
+          console.error('Files to index (showing first 50):');
+          for (const fp of filePaths.slice(0, 50)) {
+            console.error(`  - ${fp}`);
+          }
+          if (filePaths.length > 50) {
+            console.error(`  ... and ${filePaths.length - 50} more files`);
+          }
         }
-      } catch (error) {
-        errors.push(`Batch ${batchNum}: ${error instanceof Error ? error.message : String(error)}`);
-        console.error(`  ✗ Batch ${batchNum} failed:`, error);
 
-        // Try indexing files individually to isolate the problematic file
-        if (debugIndex) {
-          console.error(`  Attempting individual file indexing for batch ${batchNum}...`);
-        }
-        for (const file of batch) {
-          try {
-            await context.addToIndex([file], { waitForIndexing: false });
-            successCount++;
-            successfulPaths.add(file.path);
-            if (skipUnchanged && indexState && !contentHashes.has(file.path)) {
-              contentHashes.set(file.path, this.hashContent(file.contents));
-            }
-            if (debugIndex) {
-              console.error(`    ✓ ${file.path}`);
-            }
-          } catch (fileError) {
-            errorCount++;
-            if (debugIndex) {
-              console.error(`    ✗ ${file.path} FAILED:`, fileError);
+        // STREAMING APPROACH: Read and index files in batches to minimize memory usage
+        // Instead of loading all files into memory, we read files just-in-time for each batch
+        const BATCH_SIZE = Number.parseInt(process.env.CE_INDEX_BATCH_SIZE ?? '10', 10) || 10;
+        const totalBatches = Math.ceil(filePaths.length / BATCH_SIZE);
+        let successCount = 0;
+        let errorCount = 0;
+        let skippedCount = 0;
+        let unchangedSkippedCount = 0;
+        const errors: string[] = [];
+        const successfulPaths: Set<string> = new Set();
+        const contentHashes: Map<string, string> = new Map();
+
+        const store = this.getIndexStateStore();
+        // Skipping unchanged files is only safe when we have an existing context restored from disk.
+        // Otherwise we could "skip" everything and end up with an empty index.
+        const skipUnchanged =
+          Boolean(store) && featureEnabled('skip_unchanged_indexing') && this.restoredFromStateFile;
+        const indexState: IndexStateFile | null = skipUnchanged && store ? store.load() : null;
+        const indexedAtIso = new Date().toISOString();
+
+        for (let i = 0; i < filePaths.length; i += BATCH_SIZE) {
+          const batchPaths = filePaths.slice(i, i + BATCH_SIZE);
+          const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+          const isLastBatch = i + BATCH_SIZE >= filePaths.length;
+
+          // Read file contents for this batch only (streaming approach)
+          const batch: Array<{ path: string; contents: string }> = [];
+          for (const relativePath of batchPaths) {
+            const contents = this.readFileContents(relativePath);
+            if (contents !== null) {
+              if (skipUnchanged && indexState) {
+                const hash = this.hashContent(contents);
+                contentHashes.set(relativePath, hash);
+                const previous = indexState.files[relativePath]?.hash;
+                if (previous && previous === hash) {
+                  unchangedSkippedCount++;
+                  continue;
+                }
+              }
+              batch.push({ path: relativePath, contents });
             } else {
-              console.error(`    ✗ ${file.path} FAILED`);
+              skippedCount++;
             }
-            errors.push(`${file.path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
           }
+
+          if (batch.length === 0) {
+            console.error(`  Batch ${batchNum}/${totalBatches}: All files skipped`);
+            continue;
+          }
+
+          if (debugIndex) {
+            console.error(`\nIndexing batch ${batchNum}/${totalBatches}:`);
+            for (const file of batch) {
+              console.error(`  - ${file.path} (${file.contents.length} chars)`);
+            }
+          }
+
+          try {
+            // Don't wait for indexing on intermediate batches
+            await context.addToIndex(batch, { waitForIndexing: isLastBatch });
+            successCount += batch.length;
+            for (const file of batch) {
+              successfulPaths.add(file.path);
+              if (skipUnchanged && indexState && !contentHashes.has(file.path)) {
+                contentHashes.set(file.path, this.hashContent(file.contents));
+              }
+            }
+            if (debugIndex) {
+              console.error(`  ✓ Batch ${batchNum} indexed successfully`);
+            }
+          } catch (error) {
+            errors.push(`Batch ${batchNum}: ${error instanceof Error ? error.message : String(error)}`);
+            console.error(`  ✗ Batch ${batchNum} failed:`, error);
+
+            // Try indexing files individually to isolate the problematic file
+            if (debugIndex) {
+              console.error(`  Attempting individual file indexing for batch ${batchNum}...`);
+            }
+            for (const file of batch) {
+              try {
+                await context.addToIndex([file], { waitForIndexing: false });
+                successCount++;
+                successfulPaths.add(file.path);
+                if (skipUnchanged && indexState && !contentHashes.has(file.path)) {
+                  contentHashes.set(file.path, this.hashContent(file.contents));
+                }
+                if (debugIndex) {
+                  console.error(`    ✓ ${file.path}`);
+                }
+              } catch (fileError) {
+                errorCount++;
+                if (debugIndex) {
+                  console.error(`    ✗ ${file.path} FAILED:`, fileError);
+                } else {
+                  console.error(`    ✗ ${file.path} FAILED`);
+                }
+                errors.push(`${file.path}: ${fileError instanceof Error ? fileError.message : String(fileError)}`);
+              }
+            }
+          }
+
+          // Allow GC to reclaim memory from this batch before loading the next
+          // The batch array goes out of scope at end of loop iteration
         }
-      }
 
-      // Allow GC to reclaim memory from this batch before loading the next
-      // The batch array goes out of scope at end of loop iteration
-    }
+        // Check if any files were actually indexed
+        const totalIndexable = filePaths.length - skippedCount;
+        const allUnchanged = successCount === 0 && unchangedSkippedCount > 0 && errorCount === 0;
+        if (successCount === 0 && !allUnchanged) {
+          console.error('No files were successfully indexed');
+          this.updateIndexStatus({
+            status: 'error',
+            lastError: errors[0] || 'No files could be indexed',
+            fileCount: 0,
+          });
+          return {
+            indexed: 0,
+            skipped: skippedCount + errorCount + unchangedSkippedCount,
+            errors: errors.length > 0 ? errors : ['No files could be indexed'],
+            duration: Date.now() - startTime,
+            totalIndexable,
+            unchangedSkipped: unchangedSkippedCount,
+          };
+        }
 
-    // Check if any files were actually indexed
-    const totalIndexable = filePaths.length - skippedCount;
-    const allUnchanged = successCount === 0 && unchangedSkippedCount > 0 && errorCount === 0;
-    if (successCount === 0 && !allUnchanged) {
-      console.error('No files were successfully indexed');
-      this.updateIndexStatus({
-        status: 'error',
-        lastError: errors[0] || 'No files could be indexed',
-        fileCount: 0,
-      });
-      return {
-        indexed: 0,
-        skipped: skippedCount + errorCount + unchangedSkippedCount,
-        errors: errors.length > 0 ? errors : ['No files could be indexed'],
-        duration: Date.now() - startTime,
-        totalIndexable,
-        unchangedSkipped: unchangedSkippedCount,
-      };
-    }
+        console.error(`\nIndexing complete: ${successCount} succeeded, ${errorCount} had errors, ${skippedCount} skipped`);
 
-    console.error(`\nIndexing complete: ${successCount} succeeded, ${errorCount} had errors, ${skippedCount} skipped`);
+        if (store && successfulPaths.size > 0) {
+          const prior = store.load();
+          const nextFiles: Record<string, { hash: string; indexed_at: string }> = {};
+          const existingPaths = new Set(filePaths);
 
-    if (store && successfulPaths.size > 0) {
-      const prior = store.load();
-      const nextFiles: Record<string, { hash: string; indexed_at: string }> = {};
-      const existingPaths = new Set(filePaths);
+          // Carry forward entries for files that still exist.
+          for (const [p, entry] of Object.entries(prior.files)) {
+            if (!existingPaths.has(p)) continue;
+            nextFiles[p] = entry;
+          }
 
-      // Carry forward entries for files that still exist.
-      for (const [p, entry] of Object.entries(prior.files)) {
-        if (!existingPaths.has(p)) continue;
-        nextFiles[p] = entry;
-      }
+          // Update entries for successfully indexed files.
+          for (const p of successfulPaths) {
+            const hash = contentHashes.get(p);
+            if (!hash) continue;
+            nextFiles[p] = { hash, indexed_at: indexedAtIso };
+          }
 
-      // Update entries for successfully indexed files.
-      for (const p of successfulPaths) {
-        const hash = contentHashes.get(p);
-        if (!hash) continue;
-        nextFiles[p] = { hash, indexed_at: indexedAtIso };
-      }
+          store.save({
+            version: typeof prior.version === 'number' ? prior.version + 1 : 2,
+            updated_at: new Date().toISOString(),
+            files: nextFiles,
+          });
+        }
 
-      store.save({
-        version: typeof prior.version === 'number' ? prior.version + 1 : 2,
-        updated_at: new Date().toISOString(),
-        files: nextFiles,
-      });
-    }
+        // Save state after indexing (even if some files failed)
+        if (successCount > 0) {
+          await this.saveState();
+          console.error('Context state saved');
 
-    // Save state after indexing (even if some files failed)
-    if (successCount > 0) {
-      await this.saveState();
-      console.error('Context state saved');
+          this.updateIndexStatus({
+            status: errorCount > 0 ? 'error' : 'idle',
+            lastIndexed: new Date().toISOString(),
+            fileCount: totalIndexable,
+            lastError: errors.length ? errors[errors.length - 1] : undefined,
+          });
+        } else {
+          // Nothing to write, but treat as a successful no-op when everything is unchanged.
+          this.updateIndexStatus({
+            status: errorCount > 0 ? 'error' : 'idle',
+            lastIndexed: new Date().toISOString(),
+            fileCount: totalIndexable,
+            lastError: errors.length ? errors[errors.length - 1] : undefined,
+          });
+        }
 
-      this.updateIndexStatus({
-        status: errorCount > 0 ? 'error' : 'idle',
-        lastIndexed: new Date().toISOString(),
-        fileCount: totalIndexable,
-        lastError: errors.length ? errors[errors.length - 1] : undefined,
-      });
-    } else {
-      // Nothing to write, but treat as a successful no-op when everything is unchanged.
-      this.updateIndexStatus({
-        status: errorCount > 0 ? 'error' : 'idle',
-        lastIndexed: new Date().toISOString(),
-        fileCount: totalIndexable,
-        lastError: errors.length ? errors[errors.length - 1] : undefined,
-      });
-    }
+        // Clear cache after reindexing
+        this.clearCache();
+        console.error('Workspace indexing finished');
 
-    // Clear cache after reindexing
-    this.clearCache();
-    console.error('Workspace indexing finished');
-
-	      return {
-	        indexed: successCount,
-	        skipped: skippedCount + errorCount + unchangedSkippedCount,
-	        errors,
-	        duration: Date.now() - startTime,
+        return {
+          indexed: successCount,
+          skipped: skippedCount + errorCount + unchangedSkippedCount,
+          errors,
+          duration: Date.now() - startTime,
           totalIndexable,
           unchangedSkipped: unchangedSkippedCount,
-	      };
+        };
       } catch (e) {
         metricsResult = 'error';
         throw e;
@@ -2139,97 +2014,7 @@ export class ContextServiceClient {
     });
   }
 
-  /**
-   * Run workspace indexing in a background worker thread
-   */
-  async indexWorkspaceInBackground(): Promise<void> {
-    if (this.isOfflineMode()) {
-      const message = 'Background indexing is disabled while CONTEXT_ENGINE_OFFLINE_ONLY is enabled.';
-      console.error(message);
-      this.updateIndexStatus({ status: 'error', lastError: message });
-      throw new Error(message);
-    }
 
-    const workerSpec = this.getIndexWorkerSpec();
-    if (!workerSpec) {
-      console.error('[indexWorkspaceInBackground] Index worker unavailable; falling back to in-process indexing.');
-      await this.indexWorkspace();
-      return;
-    }
-
-    return new Promise((resolve, reject) => {
-      this.updateIndexStatus({ status: 'indexing', lastError: undefined });
-      const worker = new Worker(workerSpec.url, {
-        execArgv: workerSpec.execArgv,
-        workerData: {
-          workspacePath: this.workspacePath,
-        },
-      });
-
-      let settled = false;
-      worker.on('message', (message: WorkerMessage) => {
-        if (message.type === 'index_complete') {
-          void (async () => {
-            if (settled) return;
-            settled = true;
-
-            this.updateIndexStatus({
-              status: message.errors?.length ? 'error' : 'idle',
-              lastIndexed: new Date().toISOString(),
-              fileCount: message.totalIndexable ?? message.count,
-              lastError: message.errors?.[message.errors.length - 1],
-            });
-
-            // Worker updates the persisted state file, but this instance holds an in-memory context.
-            // Reset and reload so subsequent searches use the fresh index.
-            this.context = null;
-            this.initPromise = null;
-            this.clearCache();
-            await this.ensureInitialized();
-
-            await worker.terminate();
-            resolve();
-          })().catch(async (e) => {
-            try {
-              await worker.terminate();
-            } catch {
-              // ignore
-            }
-            reject(e);
-          });
-        } else if (message.type === 'index_error') {
-          if (settled) return;
-          settled = true;
-          this.updateIndexStatus({
-            status: 'error',
-            lastError: message.error,
-          });
-          void worker.terminate().finally(() => {
-            reject(new Error(message.error));
-          });
-        }
-      });
-
-      worker.on('error', (error) => {
-        if (settled) return;
-        settled = true;
-        this.updateIndexStatus({ status: 'error', lastError: String(error) });
-        void worker.terminate().finally(() => {
-          reject(error);
-        });
-      });
-
-      worker.on('exit', (code) => {
-        if (settled) return;
-        settled = true;
-        if (code !== 0) {
-          const err = new Error(`Index worker exited with code ${code}`);
-          this.updateIndexStatus({ status: 'error', lastError: err.message });
-          reject(err);
-        }
-      });
-    });
-  }
 
   /**
    * Get current index status metadata
@@ -2259,50 +2044,7 @@ export class ContextServiceClient {
       }
 
       const uniquePaths = Array.from(new Set(filePaths));
-      const useWorker =
-        process.env.CE_INDEX_USE_WORKER !== 'false' &&
-        // Avoid worker-based indexing in Jest unit tests (worker won't inherit mocks).
-        !process.env.JEST_WORKER_ID;
-      const threshold =
-        Number.parseInt(process.env.CE_INDEX_FILES_WORKER_THRESHOLD ?? '200', 10) || 200;
 
-      if (useWorker && uniquePaths.length >= threshold) {
-        this.updateIndexStatus({ status: 'indexing', lastError: undefined });
-        let result: IndexResult | null = null;
-        try {
-          result = await this.runIndexWorker(uniquePaths);
-        } catch (e) {
-          console.error('[indexFiles] Worker indexing unavailable; falling back to in-process indexing:', e);
-          result = null;
-        }
-
-        if (!result) {
-          // fall through to in-process path
-        } else {
-
-          if (result.indexed > 0) {
-            this.updateIndexStatus({
-              status: result.errors.length ? 'error' : 'idle',
-              lastIndexed: new Date().toISOString(),
-              fileCount: Math.max(this.indexStatus.fileCount, result.indexed),
-              lastError: result.errors.length ? result.errors[result.errors.length - 1] : undefined,
-            });
-          } else {
-            this.updateIndexStatus({
-              status: 'error',
-              lastError: result.errors[0] || 'Incremental indexing failed',
-            });
-          }
-
-          // Ensure the in-memory context reflects the worker-written state file.
-          this.context = null;
-          this.initPromise = null;
-          this.clearCache();
-          await this.ensureInitialized({ skipAutoIndex: true });
-
-          return result;
-        }
-      }
 
       this.updateIndexStatus({ status: 'indexing', lastError: undefined });
       const context = await this.ensureInitialized({ skipAutoIndex: true });
@@ -2585,18 +2327,14 @@ export class ContextServiceClient {
     try {
       console.error(`[semanticSearch] Searching for: ${query}`);
 
-      // Use the SDK's search method
-      const formattedResults = await context.search(query, {
-        maxOutputLength: options?.maxOutputLength ?? (topK * 2000), // Approximate output length based on topK
-      });
+      let searchResults: SearchResult[];
 
+
+      const localResults = await context.search(query, { topK });
+      searchResults = localResults as SearchResult[];
       if (debugSearch) {
-        console.error(`[semanticSearch] Raw results length: ${formattedResults?.length || 0}`);
-        console.error(`[semanticSearch] Raw results preview: ${formattedResults?.substring(0, 200) || '(empty)'}`);
+        console.error(`[semanticSearch] Local search returned ${localResults.length} results`);
       }
-
-      // Parse the formatted results into SearchResult objects
-      const searchResults = this.parseFormattedResults(formattedResults, topK);
 
       if (debugSearch) {
         console.error(`[semanticSearch] Parsed ${searchResults.length} results`);

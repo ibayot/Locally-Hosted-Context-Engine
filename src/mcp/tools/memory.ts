@@ -2,7 +2,7 @@
  * Layer 3: MCP Interface Layer - Memory Tool
  *
  * Provides persistent cross-session memory storage using markdown files.
- * Memories are stored in .memories/ directory and indexed by Auggie for
+ * Memories are stored in .memories/ directory and indexed by the Context Engine for
  * semantic retrieval alongside code context.
  *
  * Responsibilities:
@@ -230,7 +230,7 @@ export const addMemoryTool = {
 - Add decision: "Chose JWT for authentication because..."
 - Add fact: "API runs on port 3000"
 
-Memories are stored in \`.memories/\` directory and indexed by Auggie for semantic retrieval.`,
+Memories are stored in \`.memories/\` directory and indexed by the Context Engine for semantic retrieval.`,
   inputSchema: {
     type: 'object',
     properties: {

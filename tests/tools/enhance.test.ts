@@ -177,9 +177,8 @@ Here is an enhanced version of the original instruction that is more specific an
       expect(enhancePromptTool.description).toContain('fix the login bug');
     });
 
-    it('should mention authentication requirement', () => {
-      expect(enhancePromptTool.description).toContain('authentication');
-      expect(enhancePromptTool.description).toContain('auggie login');
+    it('should mention configured AI model requirement', () => {
+      expect(enhancePromptTool.description).toContain('configured AI model');
     });
   });
 });
