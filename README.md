@@ -1,49 +1,50 @@
-# Context Engine (Local Edition v3.0)
+# Local Context Engine v1.0.0 (Production Ready)
 
-A powerful, **Local-First** context engine for AI Agents (Antigravity/Gemini).
+Welcome to the **Local Context Engine**, a powerful, privacy-first, and completely free alternative to expensive cloud-based context indexers. 
 
-## Features
-*   **100% Local**: No API keys, no clouds, no recurring costs.
-*   **Smart Indexing**: Respects function/class boundaries for accurate context.
-*   **Fast Parallel Processing**: Up to 8x faster indexing.
-*   **BMAD Integration**: Built-in support for the "Breakthrough Method for Agile AI-Driven Development".
-*   **Security Scanning**: Integrated secret scanning to prevent leaks.
+This engine is designed to run locally on your machine, providing your AI agents with deep understanding of your codebase without ever sending your code to a third-party indexing service.
 
-## Installation
-```bash
-npm install
-npm run build
-```
+## 🚀 Key Features
 
-## Usage
+*   **100% Local & Privacy-First**: 
+    *   No code leaves your machine. 
+    *   Embeddings are generated locally using ONNX Runtime.
+    *   Vector store is file-based and lives in your workspace (`.local-context/`).
+*   **Completely Free**: 
+    *   Avoid usage-based fees from cloud indexers.
+    *   Run as many projects as you want without cost.
+*   **Production Ready**:
+    *   Benchmarked for stability and performance.
+    *   Includes automatic race-condition handling and robust error recovery.
+    *   Seamless background indexing with low CPU impact.
+*   **Offline Capable**:
+    *   Once models are downloaded (first run only), the engine works entirely without internet access.
+*   **Smart Features included**:
+    *   **Semantic Search**: Find code by meaning, not just keywords.
+    *   **Context Retrieval**: Smartly gathers relevant files and snippets for your prompt.
+    *   **Security Scanning**: Built-in scanning for secrets and vulnerabilities.
+    *   **BMAD Workflow Support**: Native integration with the Breakthrough Method for Agile AI-Driven Development.
 
-### Start Server (MCP)
-```bash
-# Standard mode (stdio)
-node dist/index.js
+## 📦 Architecture
 
-# With File Watcher (auto-reindex on changes)
-node dist/index.js --watch
+The engine uses a modern stack optimized for local execution:
+*   **Embedding Model**: Uses `@xenova/transformers` to run `all-MiniLM-L6-v2` (or similar) directly in Node.js.
+*   **Vector Store**: A high-performance, disk-based JSON vector store optimized for retrieval speed.
+*   **MCP Protocol**: Fully compliant Model Context Protocol server, compatible with Cursor, Windsurf, and other agents.
 
-# Force initial indexing
-node dist/index.js --index
-```
+## 🛠️ Installation & Setup
 
-## Tools Available
-The server exposes the following tools to your AI agent:
+Please see [INSTALLATION.md](./INSTALLATION.md) for detailed setup instructions.
 
-### 🔍 Context Retrieval
-*   `index_workspace`: Index the current project.
-*   `semantic_search(query)`: Search for code by meaning.
-*   `get_context_for_prompt(prompt)`: Smartly retrieve context for a task.
+### Quick Start
+1.  **Clone** this repository to your preferred tools directory.
+2.  **Build** the project: `npm install && npm run build`.
+3.  **Configure** your AI tool (e.g., Cursor) to point to the build output.
+4.  **Open** any project, and indexing starts automatically!
 
-### 📘 BMAD Method
-*   `get_bmad_guidelines(phase)`: Get instructions for Planning, Architecture, or Development phases.
+## ⚠️ Known Limitations (v1.0.0)
+*   **Generative Features**: Tools requiring a generative LLM (Planning, Code Review) are currently disabled in the local-only mode. To enable them, you would need to hook up a local LLM runner (like Ollama), which is planned for v1.1.0. 
+*   **Initial Download**: The first time you run it, it will download ~200MB of machine learning models. This happens once per machine.
 
-### 🛡️ Security
-*   `scan_security(path)`: Scan files for API keys and dangerous patterns.
-
-## Architecture
-*   **Embeddings**: `@xenova/transformers` (all-MiniLM-L6-v2) - Local CPU execution.
-*   **Storage**: JSON-based Vector Store (`.local-context/index.json`).
-*   **Protocol**: Model Context Protocol (MCP) over Stdio.
+## 📄 License
+MIT License - Free for personal and commercial use.

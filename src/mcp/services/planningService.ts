@@ -113,6 +113,15 @@ export class PlanningService {
         }),
       });
 
+      if (response.includes('LLM generation is disabled in local mode')) {
+        return {
+          success: false,
+          status: 'failed',
+          error: 'Planning requires an LLM. This feature is disabled in local-only mode.',
+          duration_ms: Date.now() - startTime,
+        };
+      }
+
       // =========================================================================
       // PARALLELIZATION: Parse plan and prepare dependency analysis concurrently
       //
@@ -213,6 +222,15 @@ export class PlanningService {
           max: MAX_PLAN_AI_TIMEOUT_MS,
         }),
       });
+
+      if (response.includes('LLM generation is disabled in local mode')) {
+        return {
+          success: false,
+          status: 'failed',
+          error: 'Plan refinement requires an LLM. This feature is disabled in local-only mode.',
+          duration_ms: Date.now() - startTime,
+        };
+      }
 
       // Parse the refined plan
       const refinedPlan = await this.parseAndValidatePlan(response, null, currentPlan);

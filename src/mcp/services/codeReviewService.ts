@@ -109,6 +109,17 @@ export class CodeReviewService {
         fullPrompt
       );
 
+      if (response.includes('LLM generation is disabled in local mode')) {
+        return {
+          findings: [],
+          overall_correctness: 'needs attention',
+          overall_explanation: 'Code review requires an LLM. This feature is disabled in local-only mode.',
+          overall_confidence_score: 0,
+          changes_summary: { files_changed: filteredDiff.files.length, lines_added: filteredDiff.lines_added, lines_removed: filteredDiff.lines_removed },
+          metadata: this.buildMetadata(startTime, opts, 0),
+        };
+      }
+
       // Step 6: Parse and validate the response
       const jsonStr = extractJsonFromResponse(response);
       if (!jsonStr) {
