@@ -9,14 +9,14 @@ export const getBmadGuidelinesTool: Tool = {
         properties: {
             phase: {
                 type: 'string',
-                enum: ['planning', 'product_owner', 'architecture', 'scrum_master', 'development', 'qa'],
-                description: 'Specific phase/role to get guidelines for (Product Owner, Analyst, Architect, Scrum Master, Developer, QA).',
+                enum: ['planning', 'product_owner', 'ui_ux', 'architecture', 'security', 'scrum_master', 'development', 'qa', 'devops'],
+                description: 'Specific phase/role to get guidelines for.',
             },
         },
     },
 };
 
 export async function handleGetBmadGuidelines(args: any): Promise<string> {
-    const phase = args.phase as 'planning' | 'product_owner' | 'architecture' | 'scrum_master' | 'development' | 'qa' | undefined;
+    const phase = args.phase as 'planning' | 'product_owner' | 'ui_ux' | 'architecture' | 'security' | 'scrum_master' | 'development' | 'qa' | 'devops' | undefined;
     return getGuidelines(phase);
 }
