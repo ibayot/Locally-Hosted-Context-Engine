@@ -28,6 +28,44 @@ The BMAD method transforms chaotic "vibe coding" into a structured, agentic work
 - **Non-Functional Requirements**: Performance, Security, etc.
 `,
 
+    product_owner: `
+### Phase 0: Product Vision & Alignment
+**Role:** Product Owner
+**Goal:** Define the Vision and Acceptance Criteria.
+
+**Deliverable:** \`00_VISION.md\` (or section in PRD)
+- **Vision Statement**: The high-level "why" of the project.
+- **Success Metrics**: How do we measure success?
+- **Acceptance Criteria**: Strict conditions for "Done".
+- **Prioritization**: What is MVP, what is nice-to-have?
+`,
+
+    scrum_master: `
+### Phase 2b: Sprint Planning & Task Breakdown
+**Role:** Scrum Master
+**Goal:** Turn the Architecture into actionable tasks.
+
+**Deliverable:** \`03_TASKS.md\`
+- **Task Breakdown**: Convert architectural components into small, atomic tasks.
+- **Dependencies**: Identify what blocks what.
+- **Estimation**: T-shirt sizing (S/M/L) for complexity.
+- **Definition of Done**: Checklist for each task (Test, Lint, Doc).
+- **Process Check**: Ensure the team is unblocked.
+`,
+
+    qa: `
+### Phase 4: Quality & Verification
+**Role:** QA Lead / SDET
+**Goal:** Break the system to ensure it's robust.
+
+**Deliverable:** \`04_TEST_PLAN.md\` & Verification Reports
+- **Test Strategy**: Unit vs. Integration vs. E2E.
+- **Edge Cases**: Identify boundary conditions and error states.
+- **Manual Verification**: Walkthrough steps for the user.
+- **Automated Tests**: Requirements for test coverage.
+- **Security Check**: Verify no secrets or vulnerabilities (using \`scan_security\`).
+`,
+
     architecture: `
 ### Phase 2: Architecture Design
 **Role:** System Architect
@@ -55,7 +93,8 @@ The BMAD method transforms chaotic "vibe coding" into a structured, agentic work
 `
 };
 
-export function getGuidelines(phase?: 'planning' | 'architecture' | 'development'): string {
+export function getGuidelines(phase?: 'planning' | 'product_owner' | 'architecture' | 'scrum_master' | 'development' | 'qa'): string {
     if (!phase) return BMAD_GUIDELINES.overview;
+    // @ts-ignore - dynamic access
     return BMAD_GUIDELINES[phase] || BMAD_GUIDELINES.overview;
 }
