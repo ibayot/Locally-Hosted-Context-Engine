@@ -85,6 +85,8 @@ import {
   handleGetReviewTelemetry,
   handleScrubSecrets,
   handleValidateContent,
+  scrubSecretsTool,
+  validateContentTool,
 } from './tools/reactiveReview.js';
 import { getBmadGuidelinesTool, handleGetBmadGuidelines } from './tools/bmad.js';
 import { scanSecurityTool, handleScanSecurity } from './tools/security.js';
@@ -310,7 +312,7 @@ export class ContextEngineMCPServer {
           semanticSearchTool,
           getFileTool,
           getContextTool,
-          enhancePromptTool,
+          // enhancePromptTool, // Disabled: Requires LLM
           indexStatusTool,
           reindexWorkspaceTool,
           clearIndexTool,
@@ -318,22 +320,25 @@ export class ContextEngineMCPServer {
           // Memory tools (v1.4.1)
           addMemoryTool,
           listMemoriesTool,
-          // Planning tools (Phase 1)
-          createPlanTool,
-          refinePlanTool,
-          visualizePlanTool,
-          executePlanTool,
-          // Plan management tools (Phase 2)
-          ...planManagementTools,
+          // Planning tools (Phase 1) - Disabled in local mode
+          // createPlanTool,
+          // refinePlanTool,
+          // visualizePlanTool,
+          // executePlanTool,
+          // Plan management tools (Phase 2) - Disabled in local mode
+          // ...planManagementTools,
           // Code Review tools (v1.5.0)
-          reviewChangesTool,
-          reviewGitDiffTool,
-          reviewDiffTool,
-          reviewAutoTool,
+          // reviewChangesTool, // Disabled: Requires LLM
+          // reviewGitDiffTool, // Disabled: Requires LLM
+          // reviewDiffTool,    // Disabled: Requires LLM
+          // reviewAutoTool,    // Disabled: Requires LLM
           checkInvariantsTool,
           runStaticAnalysisTool,
           // Reactive Review tools (Phase 4)
-          ...reactiveReviewTools,
+          // ...reactiveReviewTools, // Disabled: Requires LLM session
+          // Kept as standalone utilities:
+          scrubSecretsTool,
+          validateContentTool,
           // New Tools (v3.0)
           getBmadGuidelinesTool,
           scanSecurityTool,
@@ -389,9 +394,11 @@ export class ContextEngineMCPServer {
             result = await handleGetContext(args as any, this.serviceClient);
             break;
 
+          /*
           case 'enhance_prompt':
             result = await handleEnhancePrompt(args as any, this.serviceClient);
             break;
+          */
 
           // Memory tools (v1.4.1)
           case 'add_memory':
@@ -402,6 +409,7 @@ export class ContextEngineMCPServer {
             result = await handleListMemories(args as any, this.serviceClient);
             break;
 
+          /*
           // Planning tools (Phase 1)
           case 'create_plan':
             result = await handleCreatePlan(args as any, this.serviceClient);
@@ -488,6 +496,7 @@ export class ContextEngineMCPServer {
           case 'review_auto':
             result = await handleReviewAuto(args as any, this.serviceClient);
             break;
+          */
 
           case 'check_invariants':
             result = await handleCheckInvariants(args as any, this.serviceClient);
@@ -497,6 +506,7 @@ export class ContextEngineMCPServer {
             result = await handleRunStaticAnalysis(args as any, this.serviceClient);
             break;
 
+          /*
           // Reactive Review tools (Phase 4)
           case 'reactive_review_pr':
             result = await handleReactiveReviewPR(args as any, this.serviceClient);
@@ -517,6 +527,7 @@ export class ContextEngineMCPServer {
           case 'get_review_telemetry':
             result = await handleGetReviewTelemetry(args as any, this.serviceClient);
             break;
+          */
 
           case 'scrub_secrets':
             result = await handleScrubSecrets(args as any);

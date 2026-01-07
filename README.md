@@ -43,7 +43,7 @@ Please see [INSTALLATION.md](./INSTALLATION.md) for detailed setup instructions.
 4.  **Open** any project, and indexing starts automatically!
 
 ## ⚠️ Known Limitations (v1.0.0)
-*   **Generative Features**: Tools requiring a generative LLM (Planning, Code Review) are currently disabled in the local-only mode. To enable them, you would need to hook up a local LLM runner (like Ollama), which is planned for v1.1.0. 
+*   **Tool Set**: Generative AI tools (Planning, Code Review) have been **removed from the interface** in this version to ensure a purely local, deterministic experience. The focus is on robust context retrieval, search, and security scanning.
 *   **Initial Download**: The first time you run it, it will download ~200MB of machine learning models. This happens once per machine.
 
 ## 📄 License
