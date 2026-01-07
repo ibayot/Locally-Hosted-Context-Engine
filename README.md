@@ -24,6 +24,7 @@ This engine is designed to run locally on your machine, providing your AI agents
     *   **Context Retrieval**: Smartly gathers relevant files and snippets for your prompt.
     *   **Security Scanning**: Built-in scanning for secrets and vulnerabilities.
     *   **BMAD Workflow Support**: Native integration with the Breakthrough Method for Agile AI-Driven Development (Product Owner, Analyst, UI/UX, Architect, Security, Developer, QA, DevOps).
+    *   **Domain Intelligence**: Specialized branched workflows for **Apps** (SaaS, Mobile) vs. **Games** (2D/3D, Mechanics) with tailored "leading questions" for discovery.
 
 ## 📦 Architecture
 

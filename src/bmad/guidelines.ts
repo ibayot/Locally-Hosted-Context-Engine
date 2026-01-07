@@ -29,9 +29,28 @@ The BMAD method transforms chaotic "vibe coding" into a structured, agentic work
 `,
 
     product_owner: `
-### Phase 0: Product Vision & Alignment
+### Phase 0: Product Vision & Alignment (Discovery)
 **Role:** Product Owner
-**Goal:** Define the Vision and Acceptance Criteria.
+**Goal:** Define the Vision and Acceptance Criteria. This is the "Interview Phase".
+
+**Discovery Protocol:**
+The Product Owner MUST first ask: **"Are we building an Application/Website or a Game?"**
+
+#### Track A: Application / Website
+If building an App, ask these **Leading Questions**:
+1.  **Core Problem**: What specific problem does this solve for the user?
+2.  **Target Audience**: Who is the primary user persona?
+3.  **Platform Strategy**: Web-only, Mobile-first (PWA), or Native?
+4.  **Key Features**: What are the top 3 items for the MVP?
+5.  **Monetization**: SaaS, Ad-supported, or Free?
+
+#### Track B: Game Development
+If building a Game, ask these **Leading Questions**:
+1.  **Genre & Vibe**: What is the genre (RPG, Platformer, Puzzle) and "feel"?
+2.  **Dimensionality**: Is it 2D (Side-scroller, Top-down) or 3D?
+3.  **Core Loop**: What is the player doing second-to-second (Jumping, Shooting, Solving)?
+4.  **Art Style**: Pixel art, Low-poly, Realistic, or Abstract?
+5.  **Progression**: How does the player get stronger/advance (Levels, XP, Loot)?
 
 **Deliverable:** \`00_VISION.md\` (or section in PRD)
 - **Vision Statement**: The high-level "why" of the project.
@@ -68,15 +87,22 @@ The BMAD method transforms chaotic "vibe coding" into a structured, agentic work
 
     ui_ux: `
 ### Phase 1b: Design & User Experience
-**Role:** UI/UX Designer
-**Goal:** Create a stunning, intuitive, and "wow" user interface.
+**Role:** UI/UX Designer / Game Artist
+**Goal:** Create a stunning, intuitive, and "wow" user interface (or Game Art).
 
 **Deliverable:** \`01_DESIGN.md\`
+
+#### For Apps/Websites:
 - **Design System**: Typography, color palette, component library (e.g., Shadcn/Tailwind).
 - **User Flows**: Critical user journeys (Login, Dashboard, Checkout).
 - **Wireframes**: Layout structure for key pages.
-- **Micro-interactions**: Animations and feedback states.
 - **Aesthetics**: "Wow" factor elements (glassmorphism, gradients, etc).
+
+#### For Games:
+- **Art Direction**: Color palette, mood board, asset style (Pixel/Vector).
+- **HUD Design**: Health bars, inventory, score displays.
+- **Menus**: Title screen, pause menu, settings.
+- **Assets List**: Sprites, sounds, and music needed.
 `,
 
     security: `
@@ -109,6 +135,11 @@ The BMAD method transforms chaotic "vibe coding" into a structured, agentic work
 ### Phase 2: Architecture Design
 **Role:** System Architect
 **Goal:** Define *how* we build it.
+
+**Stack Selection Strategy:**
+- **For Apps**: React, Next.js, Node.js, PostgreSQL, Tailwind.
+- **For Games (Web)**: Phaser.js (2D), Three.js/React-Three-Fiber (3D), Godot (Web Export).
+- **For Games (Native)**: Unity, Unreal, Godot.
 // ... existing content ...
 
 **Deliverable:** \`02_ARCH.md\`
