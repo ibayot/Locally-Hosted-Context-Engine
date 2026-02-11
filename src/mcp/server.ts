@@ -90,6 +90,17 @@ import {
 } from './tools/reactiveReview.js';
 import { getBmadGuidelinesTool, handleGetBmadGuidelines } from './tools/bmad.js';
 import { scanSecurityTool, handleScanSecurity } from './tools/security.js';
+import { findTodosTool, handleFindTodos } from './tools/todoTracker.js';
+import { fileStatsTool, handleFileStats } from './tools/fileStats.js';
+import { projectStructureTool, handleProjectStructure } from './tools/projectStructure.js';
+import { gitContextTool, handleGitContext } from './tools/gitContext.js';
+import { findSymbolTool, handleFindSymbol } from './tools/symbolIndex.js';
+import { dependencyGraphTool, handleDependencyGraph } from './tools/dependencyGraph.js';
+import { codeMetricsTool, handleCodeMetrics } from './tools/codeMetrics.js';
+import { findDuplicatesTool, handleFindDuplicates } from './tools/duplicateDetector.js';
+import { ollamaStatusTool, handleOllamaStatus } from './tools/ollamaStatus.js';
+// import { bmadWorkflowTool, handleBmadWorkflow } from './tools/bmadWorkflow.js';
+import { scaffoldBmadTool, handleScaffoldBmad } from './tools/scaffoldBmad.js';
 import { FileWatcher } from '../watcher/index.js';
 
 export class ContextEngineMCPServer {
@@ -320,28 +331,43 @@ export class ContextEngineMCPServer {
           // Memory tools (v1.4.1)
           addMemoryTool,
           listMemoriesTool,
-          // Planning tools (Phase 1) - Disabled in local mode
+          // Planning tools - LLM-powered via Ollama (Disabled by user request)
           // createPlanTool,
           // refinePlanTool,
-          // visualizePlanTool,
+          visualizePlanTool, // Keep visualize
           // executePlanTool,
-          // Plan management tools (Phase 2) - Disabled in local mode
-          // ...planManagementTools,
-          // Code Review tools (v1.5.0)
-          // reviewChangesTool, // Disabled: Requires LLM
-          // reviewGitDiffTool, // Disabled: Requires LLM
-          // reviewDiffTool,    // Disabled: Requires LLM
-          // reviewAutoTool,    // Disabled: Requires LLM
+          // Plan management tools - Pure I/O
+          ...planManagementTools,
+          // Code Review tools (v1.5.0) - LLM-powered via Ollama (Disabled)
+          // reviewChangesTool,
+          // reviewGitDiffTool,
+          // reviewDiffTool,
+          // reviewAutoTool,
           checkInvariantsTool,
           runStaticAnalysisTool,
-          // Reactive Review tools (Phase 4)
-          // ...reactiveReviewTools, // Disabled: Requires LLM session
-          // Kept as standalone utilities:
+          // Reactive Review tools
+          ...reactiveReviewTools,
+          // Standalone utilities
           scrubSecretsTool,
           validateContentTool,
-          // New Tools (v3.0)
+          // New Tools (v3.0 -> v1.2)
           getBmadGuidelinesTool,
           scanSecurityTool,
+          // Ollama LLM status (disabled but kept for future)
+          // ollamaStatusTool,
+          // BMAD workflow (Agent-driven now)
+          // bmadWorkflowTool, // Replaced by scaffold
+          scaffoldBmadTool,
+          // New Tools (v4.0) - Local utilities
+          findTodosTool,
+          fileStatsTool,
+          projectStructureTool,
+          gitContextTool,
+          // New Tools (v4.1) - AST-powered
+          findSymbolTool,
+          dependencyGraphTool,
+          codeMetricsTool,
+          findDuplicatesTool,
         ],
       };
     });
@@ -409,8 +435,8 @@ export class ContextEngineMCPServer {
             result = await handleListMemories(args as any, this.serviceClient);
             break;
 
+          // Planning tools - LLM-powered via Ollama (Disabled)
           /*
-          // Planning tools (Phase 1)
           case 'create_plan':
             result = await handleCreatePlan(args as any, this.serviceClient);
             break;
@@ -418,16 +444,19 @@ export class ContextEngineMCPServer {
           case 'refine_plan':
             result = await handleRefinePlan(args as any, this.serviceClient);
             break;
+          */
 
           case 'visualize_plan':
             result = await handleVisualizePlan(args as any, this.serviceClient);
             break;
 
+          /*
           case 'execute_plan':
             result = await handleExecutePlan(args as any, this.serviceClient);
             break;
+          */
 
-          // Plan management tools (Phase 2)
+          // Plan management tools (Phase 2) - Pure I/O, re-enabled
           case 'save_plan':
             result = await handleSavePlan(args as Record<string, unknown>);
             break;
@@ -480,7 +509,8 @@ export class ContextEngineMCPServer {
             result = await handleRollbackPlan(args as Record<string, unknown>);
             break;
 
-          // Code Review tools (v1.5.0)
+          // Code Review tools - LLM-powered via Ollama (Disabled)
+          /*
           case 'review_changes':
             result = await handleReviewChanges(args as any, this.serviceClient);
             break;
@@ -506,8 +536,7 @@ export class ContextEngineMCPServer {
             result = await handleRunStaticAnalysis(args as any, this.serviceClient);
             break;
 
-          /*
-          // Reactive Review tools (Phase 4)
+          // Reactive Review tools
           case 'reactive_review_pr':
             result = await handleReactiveReviewPR(args as any, this.serviceClient);
             break;
@@ -527,7 +556,6 @@ export class ContextEngineMCPServer {
           case 'get_review_telemetry':
             result = await handleGetReviewTelemetry(args as any, this.serviceClient);
             break;
-          */
 
           case 'scrub_secrets':
             result = await handleScrubSecrets(args as any);
@@ -537,6 +565,24 @@ export class ContextEngineMCPServer {
             result = await handleValidateContent(args as any);
             break;
 
+          // Ollama LLM status
+          /*
+          case 'ollama_status':
+            result = await handleOllamaStatus(args as any, this.serviceClient);
+            break;
+          */
+
+          // BMAD workflow
+          /*
+          case 'run_bmad':
+            result = await handleBmadWorkflow(args as any, this.serviceClient);
+            break;
+          */
+
+          case 'scaffold_bmad':
+            result = await handleScaffoldBmad(args as any, this.serviceClient);
+            break;
+
           // New Tools (v3.0)
           case 'get_bmad_guidelines':
             result = await handleGetBmadGuidelines(args as any);
@@ -544,6 +590,40 @@ export class ContextEngineMCPServer {
 
           case 'scan_security':
             result = await handleScanSecurity(args as any, this.workspacePath);
+            break;
+
+          // New Tools (v4.0) - Local utilities
+          case 'find_todos':
+            result = await handleFindTodos(args as any, this.serviceClient);
+            break;
+
+          case 'file_statistics':
+            result = await handleFileStats(args as any, this.serviceClient);
+            break;
+
+          case 'project_structure':
+            result = await handleProjectStructure(args as any, this.serviceClient);
+            break;
+
+          case 'git_context':
+            result = await handleGitContext(args as any, this.serviceClient);
+            break;
+
+          // New Tools (v4.1) - AST-powered
+          case 'find_symbol':
+            result = await handleFindSymbol(args as any, this.serviceClient);
+            break;
+
+          case 'dependency_graph':
+            result = await handleDependencyGraph(args as any, this.serviceClient);
+            break;
+
+          case 'code_metrics':
+            result = await handleCodeMetrics(args as any, this.serviceClient);
+            break;
+
+          case 'find_duplicates':
+            result = await handleFindDuplicates(args as any, this.serviceClient);
             break;
 
           default:

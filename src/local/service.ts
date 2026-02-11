@@ -1,5 +1,6 @@
 import { LocalVectorStore, SearchResult } from './store.js';
 import { LocalEmbeddingService } from './embedding.js';
+import { getOllamaProvider, OllamaProvider } from './ollamaProvider.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { minimatch } from 'minimatch';
@@ -135,8 +136,61 @@ export class LocalContextService {
 
     private isIndexable(relPath: string): boolean {
         const ext = path.extname(relPath).toLowerCase();
-        const allowed = ['.ts', '.js', '.tsx', '.jsx', '.py', '.java', '.go', '.rs', '.cpp', '.h', '.md', '.json'];
-        return allowed.includes(ext);
+        const allowed = new Set([
+            // TypeScript / JavaScript
+            '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+            // Python
+            '.py', '.pyi',
+            // Flutter / Dart
+            '.dart', '.arb',
+            // Go
+            '.go',
+            // Rust
+            '.rs',
+            // Java / Kotlin / Scala
+            '.java', '.kt', '.kts', '.scala',
+            // C / C++
+            '.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hxx',
+            // .NET (C# / F#)
+            '.cs', '.fs',
+            // Swift / Objective-C
+            '.swift', '.m',
+            // Ruby
+            '.rb', '.rake', '.gemspec',
+            // PHP
+            '.php',
+            // Elixir / Erlang
+            '.ex', '.exs', '.erl',
+            // Haskell / OCaml
+            '.hs', '.ml',
+            // Lua
+            '.lua',
+            // R
+            '.r', '.R',
+            // SQL
+            '.sql',
+            // Shell
+            '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd',
+            // Web frameworks
+            '.vue', '.svelte', '.astro',
+            // Web / Styles
+            '.html', '.css', '.scss', '.sass', '.less',
+            // Config / Data
+            '.json', '.yaml', '.yml', '.toml', '.xml', '.plist', '.gradle',
+            // API schemas
+            '.graphql', '.gql', '.proto',
+            // DevOps
+            '.tf', '.hcl',
+            // Documentation
+            '.md', '.mdx', '.txt', '.rst',
+        ]);
+        // Also index known filenames without extensions
+        const basename = path.basename(relPath);
+        const specialFiles = new Set([
+            'Dockerfile', 'Makefile', 'Jenkinsfile', 'Vagrantfile',
+            'Gemfile', 'Rakefile', '.env.example', '.editorconfig',
+        ]);
+        return allowed.has(ext) || specialFiles.has(basename);
     }
 
     /**
@@ -156,18 +210,54 @@ export class LocalContextService {
     }
 
     async chat(message: string, context?: any): Promise<string> {
-        return "Local Context Engine: Chat generation is not supported in local-only mode yet. I can only perform code retrieval.";
+        const ollama = getOllamaProvider();
+        const available = await ollama.isAvailable();
+
+        if (!available) {
+            return "[Local Context Engine] Ollama LLM is not available. Please ensure Ollama is running (ollama serve) and a model is downloaded (ollama pull qwen2.5-coder:7b).";
+        }
+
+        try {
+            const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
+                {
+                    role: 'system',
+                    content: 'You are a helpful code assistant with access to a local codebase. Provide concise, accurate answers.'
+                },
+                { role: 'user', content: message }
+            ];
+            return await ollama.chat(messages);
+        } catch (err: any) {
+            console.error('[LocalContextService] Ollama chat error:', err.message);
+            return `[Local Context Engine] LLM generation failed: ${err.message}`;
+        }
     }
 
     /**
-     * Mock searchAndAsk - mostly used for RAG.
-     * For local mode, we just return a message saying we can't do generation yet,
-     * or perform search and return results text.
+     * RAG-powered searchAndAsk — searches local index for context,
+     * then uses Ollama LLM to generate a grounded answer.
+     * Falls back to retrieval-only if Ollama is not available.
      */
-    async searchAndAsk(query: string, options?: any): Promise<string> {
+    async searchAndAsk(query: string, prompt?: string, options?: any): Promise<string> {
+        // Step 1: Retrieve relevant context from local index
         const results = await this.search(query, { topK: 5 });
         const context = results.map(r => `File: ${r.path}\nContent:\n${r.content}`).join('\n\n');
-        return `[Local Context] Here are the relevant snippets found for "${query}":\n\n${context}\n\n(Note: LLM generation is disabled in local mode)`;
+
+        // Step 2: Try Ollama LLM generation
+        const ollama = getOllamaProvider();
+        const available = await ollama.isAvailable();
+
+        if (!available) {
+            // Fallback: return raw search results
+            console.error('[LocalContextService] Ollama not available, returning retrieval-only results.');
+            return `[Local Context - Retrieval Only]\n\n${context}\n\n(Note: Install and run Ollama for AI-powered answers: ollama serve && ollama pull qwen2.5-coder:7b)`;
+        }
+
+        try {
+            return await ollama.searchAndAsk(query, context, prompt);
+        } catch (err: any) {
+            console.error('[LocalContextService] Ollama searchAndAsk error:', err.message);
+            return `[Local Context - Retrieval Only]\n\n${context}\n\n(LLM generation failed: ${err.message})`;
+        }
     }
 
     async exportToFile(filePath: string): Promise<void> {

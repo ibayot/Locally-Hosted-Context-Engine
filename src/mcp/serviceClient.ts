@@ -15,6 +15,7 @@
  */
 
 import { LocalContextService } from '../local/service.js';
+import { getOllamaProvider, type OllamaStatus } from '../local/ollamaProvider.js';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -847,6 +848,14 @@ export class ContextServiceClient {
    */
   getWorkspacePath(): string {
     return this.workspacePath;
+  }
+
+  /**
+   * Get the status of the local Ollama LLM provider.
+   */
+  async getOllamaStatus(): Promise<OllamaStatus> {
+    const ollama = getOllamaProvider();
+    return ollama.getStatus(true);
   }
 
   /**

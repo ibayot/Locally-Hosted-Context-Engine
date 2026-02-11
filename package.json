@@ -1,7 +1,7 @@
 {
   "name": "context-engine-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server implementation for local context engine with planning and execution features",
+  "version": "1.2.0",
+  "description": "Context engine for local developer environments with AST analysis",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

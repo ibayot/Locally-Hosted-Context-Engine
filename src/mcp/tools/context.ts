@@ -252,7 +252,8 @@ export async function handleGetContext(
   // =========================================================================
   output += `---\n\n`;
   output += `_Context retrieved in ${contextBundle.metadata.searchTimeMs}ms. `;
-  output += `Use \`semantic_search\` for more targeted queries or \`get_file\` for complete file contents._\n`;
+  output += `Use \`semantic_search\` for more targeted queries or \`get_file\` for complete file contents._\n\n`;
+  output += `> 🚀 **Workflow Tip:** Starting a new feature? Use \`scaffold_bmad\` to launch the Agent-Driven BMAD Workflow.`;
 
   return output;
 }

@@ -1,5 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { LocalEmbeddingService } from './embedding.js';
 
 export interface FileChunk {
@@ -21,10 +22,17 @@ export class LocalVectorStore {
     private indexPath: string;
     private embeddingService: LocalEmbeddingService;
     private isLoaded = false;
+    /** Maps filePath → content SHA-256 hash for skip-if-unchanged optimization */
+    private fileHashes: Map<string, string> = new Map();
 
     constructor(workspacePath: string) {
         this.indexPath = path.join(workspacePath, '.local-context', 'index.json');
         this.embeddingService = LocalEmbeddingService.getInstance();
+    }
+
+    /** Compute SHA-256 hash of content for change detection */
+    private hashContent(content: string): string {
+        return crypto.createHash('sha256').update(content).digest('hex');
     }
 
     /**
@@ -35,11 +43,16 @@ export class LocalVectorStore {
             const data = await fs.readFile(this.indexPath, 'utf-8');
             const json = JSON.parse(data);
             this.chunks = json.chunks || [];
+            // Restore file hashes from persisted index
+            if (json.fileHashes && typeof json.fileHashes === 'object') {
+                this.fileHashes = new Map(Object.entries(json.fileHashes));
+            }
             this.isLoaded = true;
-            console.error(`[LocalStore] Loaded ${this.chunks.length} chunks from ${this.indexPath}`);
+            console.error(`[LocalStore] Loaded ${this.chunks.length} chunks (${this.fileHashes.size} file hashes) from ${this.indexPath}`);
         } catch (error) {
             // If file doesn't exist, start empty
             this.chunks = [];
+            this.fileHashes = new Map();
             this.isLoaded = true;
             console.error(`[LocalStore] No existing index found at ${this.indexPath}, starting fresh.`);
         }
@@ -52,9 +65,13 @@ export class LocalVectorStore {
         const dir = path.dirname(this.indexPath);
         await fs.mkdir(dir, { recursive: true });
 
-        const data = JSON.stringify({ version: 1, chunks: this.chunks }, null, 2);
+        const data = JSON.stringify({
+            version: 2,
+            chunks: this.chunks,
+            fileHashes: Object.fromEntries(this.fileHashes),
+        }, null, 2);
         await fs.writeFile(this.indexPath, data, 'utf-8');
-        console.error(`[LocalStore] Saved ${this.chunks.length} chunks to disk.`);
+        console.error(`[LocalStore] Saved ${this.chunks.length} chunks (${this.fileHashes.size} file hashes) to disk.`);
     }
 
     /**
@@ -62,25 +79,34 @@ export class LocalVectorStore {
      * Removes old chunks for this file first to handle updates.
      */
     async addFile(filePath: string, content: string): Promise<void> {
+        // Content-hash skip: avoid re-embedding unchanged files
+        const newHash = this.hashContent(content);
+        const existingHash = this.fileHashes.get(filePath);
+        if (existingHash === newHash) {
+            // File hasn't changed, skip re-embedding
+            return;
+        }
+
         // 1. Remove existing chunks for this file
         this.removeFile(filePath);
 
-        // 2. Chunk the file (Simple chunking by lines for now)
+        // 2. Chunk the file
         const chunks = this.createChunks(filePath, content);
 
-        // 3. Generate embeddings concurrently
-        // Note: In a real worker implementation, we would queue this.
-        // For now, we do it inline but be mindful of blocking event loop.
+        // 3. Generate embeddings
         for (const chunk of chunks) {
             const vector = await this.embeddingService.embed(chunk.content);
-            // Convert Float32Array to number[]
             chunk.embedding = Array.from(vector);
             this.chunks.push(chunk);
         }
+
+        // 4. Store hash for future skip detection
+        this.fileHashes.set(filePath, newHash);
     }
 
     removeFile(filePath: string): void {
         this.chunks = this.chunks.filter(c => c.filePath !== filePath);
+        this.fileHashes.delete(filePath);
     }
 
     /**

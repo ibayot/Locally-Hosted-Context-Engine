@@ -1,67 +1,61 @@
-# Installation Guide - Local Context Engine v1.0.0
+# Context Engine v1.2.0 Installation Guide
 
-This guide will help you set up the Local Context Engine on your machine. Once installed, you can use it across unlimited projects.
+The Context Engine is a powerful local analysis tool for your codebase, featuring AST-powered symbol search, dependency graphing, and agent-driven workflow scaffolding.
 
 ## Prerequisites
-*   **Node.js**: Version 18 or higher.
-*   **Git**: To clone the repository.
-*   **IDE**: Cursor, Windsurf, or any IDE that supports the Model Context Protocol (MCP).
 
-## Step 1: Build the Engine
+- **Node.js**: v18 or higher
+- **Git**: Installed and available on PATH
 
-1.  **Navigate to the project directory**:
-    ```bash
-    cd context-engine
-    ```
+## Installation
 
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
+1. **Clone the repository** (if you haven't already) and navigate to the directory:
+   ```bash
+   cd context-engine
+   ```
 
-3.  **Build the project**:
-    ```bash
-    npm run build
-    ```
-    *This will create a `dist/` directory with the compiled server.*
+2. **Install dependencies**:
+   ```bash
+   npm install
+   ```
 
-## Step 2: Configure Your IDE
+3. **Build the project**:
+   ```bash
+   npm run build
+   ```
 
-### For Cursor / Windsurf
+## Configuration
 
-1.  Locate your MCP configuration file (usually found in `%AppData%\Cursor\User\globalStorage\mcp.json` or similar, depending on your OS/Editor).
-2.  Add the `context-engine` server to your configuration:
+The engine is designed to work out-of-the-box.
 
-    ```json
-    {
-      "mcpServers": {
-        "context-engine": {
-          "command": "node",
-          "args": [
-            "C:/path/to/your/local-context-engine/dist/index.js",
-            "${workspaceFolder}"
-          ],
-          "env": {
-             "NODE_ENV": "production"
-          }
-        }
-      }
-    }
-    ```
-    > **Important**: Replace `C:/path/to/your/local-context-engine/` with the actual absolute path where you built the project.
+### 1. Code Analysis (Core)
+The engine automatically indexes your workspace to provide:
+- AST Analysis (`find_symbol`, `dependency_graph`, `code_metrics`)
+- Local Utilities (`find_todos`, `project_structure`, `git_context`)
+- Security Scanning (`scan_security`)
 
-### Why `${workspaceFolder}`?
-By passing `${workspaceFolder}` as an argument, the Context Engine dynamically indexes whatever folder you currently have open. This means you only need to configure it **once**, and it works for every project you open.
+### 2. BMAD Workflow (Agent-Driven)
+The engine supports the **BMAD** (Breakthrough Method for Agile AI-Driven Development) workflow by providing tools for your AI Agent (Claude, Gemini, etc.) to use.
 
-## Step 3: First Run Verification
+- **Tool**: `scaffold_bmad`
+- **Usage**: Your agent can call this tool to set up the `.bmad/` directory with `01_PRD.md`, `02_ARCH.md`, and `03_TASKS.md` templates.
+- **Agent Role**: The agent then fills in these documents based on your goals, acting as the Product Owner, Architect, and Engineer.
 
-1.  Open any folder in your IDE.
-2.  Check the "Output" or "MCP" logs in your IDE.
-3.  You should see logs indicating the server is starting.
-4.  **First time only**: You might see a delay or network activity while it downloads the embedding models to `.local-context/models` inside your project folder.
-5.  Once initialized, you can use `@codebase` or other context tools immediately.
+> **Note:** Optional local LLM features (Ollama) are available in the codebase but **disabled by default** to minimize resource usage.
+
+## verifying Installation
+
+1. **Start the MCP Server** (usually handled by your agent/IDE):
+   ```bash
+   node build/index.js
+   ```
+
+2. **Check Status**:
+   - Use the `index_status` tool to see indexing progress.
+   - Use `tool_manifest` to see available capabilities.
 
 ## Troubleshooting
 
-*   **Models not downloading?**: Ensure you have internet access for the very first run.
-*   **"Planning requires LLM" error?**: This is expected behavior in v1.0.0 local mode. The planning and review tools are disabled as they require a generative text AI, which is stripped out for this purely local embedding engine.
+- **High RAM Usage**: 
+  - Code analysis (AST/Vector Store) runs efficiently in background.
+  - If you experience issues, the engine will automatically limit concurrency.

@@ -11,7 +11,7 @@ export interface ToolManifestArgs {
 }
 
 const manifest = {
-  version: '1.9.0',
+  version: '1.2.0',
   capabilities: [
     'semantic_search',
     'file_retrieval',
@@ -20,14 +20,16 @@ const manifest = {
     'lifecycle',
     'automation',
     'policy',
-    'planning',
     'plan_persistence',
     'approval_workflow',
     'execution_tracking',
     'version_history',
-    'code_review',
-    'enterprise_review',
     'static_analysis',
+    'security_scanning',
+    'memory',
+    'local_utilities',
+    'ast_analysis',
+    'bmad_scaffold',
   ],
   tools: [
     // Core Context Tools
@@ -36,15 +38,12 @@ const manifest = {
     'semantic_search',
     'get_file',
     'get_context_for_prompt',
-    'enhance_prompt',
     // Index Management Tools
     'index_status',
     'reindex_workspace',
     'clear_index',
     'tool_manifest',
-    // Planning Tools (v1.4.0)
-    'create_plan',
-    'refine_plan',
+    // Planning Tools (v1.4.0) - visualize only; create/refine/execute disabled (LLM)
     'visualize_plan',
     // Plan Persistence Tools (v1.4.0)
     'save_plan',
@@ -63,14 +62,29 @@ const manifest = {
     'view_history',
     'compare_plan_versions',
     'rollback_plan',
-    // Code Review Tools (v1.7.0)
-    'review_changes',
-    'review_git_diff',
-    // Enterprise Review (v1.8.0)
-    'review_diff',
-    // Ecosystem utilities (optional)
+    // Ecosystem utilities
     'check_invariants',
     'run_static_analysis',
+    'scrub_secrets',
+    'validate_content',
+    // Security & BMAD (v3.0)
+    'scan_security',
+    'get_bmad_guidelines',
+    // Memory (v1.4.1)
+    'add_memory',
+    'list_memories',
+    // Local Utilities (v4.0)
+    'find_todos',
+    'file_statistics',
+    'project_structure',
+    'git_context',
+    // AST-Powered Analysis (v4.1)
+    'find_symbol',
+    'dependency_graph',
+    'code_metrics',
+    'find_duplicates',
+    // BMAD Scaffolding
+    'scaffold_bmad',
   ],
   features: {
     planning: {
@@ -153,6 +167,50 @@ const manifest = {
         'TypeScript typecheck via tsc (noEmit)',
         'Optional semgrep integration when available on PATH',
         'Deterministic output (no LLM) suitable for CI',
+      ],
+    },
+    security_scanning: {
+      description: 'Local security scanning with 25+ secret and vulnerability patterns',
+      version: '2.0.0',
+      tools: ['scan_security', 'scrub_secrets'],
+      features: [
+        'Cloud provider key detection (AWS, GCP, Azure)',
+        'AI/LLM key detection (OpenAI, Anthropic)',
+        'Code vulnerability detection (eval, innerHTML, SQL injection)',
+        'Database connection string detection',
+      ],
+    },
+    local_utilities: {
+      description: 'Local-only workspace analysis tools requiring no LLM',
+      version: '2.0.0',
+      tools: ['find_todos', 'file_statistics', 'project_structure', 'git_context'],
+      features: [
+        'TODO/FIXME/HACK comment tracking across workspace',
+        'Lines-of-code and language breakdown statistics',
+        'Directory tree visualization with sizes',
+        'Git context (log, blame, status, contributors)',
+      ],
+    },
+    ast_analysis: {
+      description: 'AST-powered code analysis for 10+ languages',
+      version: '2.0.0',
+      tools: ['find_symbol', 'dependency_graph', 'code_metrics', 'find_duplicates'],
+      features: [
+        'Symbol search (classes, functions, interfaces, types)',
+        'Import/export dependency graph analysis',
+        'Cyclomatic complexity and health scoring (A-D)',
+        'Duplicate function detection via normalized hashing',
+        'Supports TS, JS, Python, Go, Rust, Java, C/C++, C#, Ruby, PHP',
+      ],
+    },
+    bmad_scaffold: {
+      description: 'Breakthrough Method for Agile AI-Driven Development (Scaffolding)',
+      version: '1.2.0',
+      tools: ['scaffold_bmad', 'get_bmad_guidelines'],
+      features: [
+        'Automated project templates (PRD, Arch, Tasks)',
+        'Role-specific guidelines for Agents',
+        'Separation of concerns: Tooling creates structure, Agent creates content',
       ],
     },
   },
