@@ -41,6 +41,7 @@ Includes integration for [Ollama](https://ollama.com) (local LLM) to enable auto
    - The agent will use `scaffold_bmad` to set up the workspace.
 
 ## 📚 Documentation
+- [Capabilities & Tools](CAPABILITIES.md) - **Read this to see what the engine can do!**
 - [Installation Guide](INSTALLATION.md)
 - [Walkthrough](walkthrough.md) (Generated Artifact)
 
