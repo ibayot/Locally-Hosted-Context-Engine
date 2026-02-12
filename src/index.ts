@@ -15,6 +15,8 @@ async function main() {
   let workspacePath = process.cwd();
   let shouldIndex = false;
   let enableWatcher = false;
+  let transport: 'stdio' | 'http' = (process.env.TRANSPORT_TYPE as 'stdio' | 'http') || 'stdio';
+  let port: number = parseInt(process.env.MCP_PORT || '3334');
 
   // Simple argument parsing
   for (let i = 0; i < args.length; i++) {
@@ -26,6 +28,12 @@ async function main() {
       shouldIndex = true;
     } else if (arg === '--watch' || arg === '-W') {
       enableWatcher = true;
+    } else if (arg === '--transport' || arg === '-t') {
+      transport = args[i + 1] as 'stdio' | 'http';
+      i++;
+    } else if (arg === '--port' || arg === '-p') {
+      port = parseInt(args[i + 1]);
+      i++;
     }
   }
 
@@ -33,6 +41,7 @@ async function main() {
   console.error('Context Engine MCP Server (Local)');
   console.error('='.repeat(80));
   console.error(`Workspace: ${workspacePath}`);
+  console.error(`Transport: ${transport}`);
   console.error('');
 
   try {
@@ -40,7 +49,6 @@ async function main() {
       enableWatcher,
     });
 
-    // Auto-Index if requested
     // Auto-Index if requested (Run in background to allow server to start immediately)
     if (shouldIndex) {
       console.error('Indexing workspace in background...');
@@ -50,8 +58,8 @@ async function main() {
         .catch(err => console.error('Background indexing failed:', err));
     }
 
-    console.error('Starting MCP server (stdio)...');
-    await server.run();
+    console.error(`Starting MCP server (${transport})...`);
+    await server.run({ transport, port });
 
   } catch (error) {
     console.error('Failed to start server:', error);

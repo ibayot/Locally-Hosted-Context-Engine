@@ -1,61 +1,91 @@
-# Context Engine v1.2.0 Installation Guide
+# Context Engine v1.2.0 Installation & Configuration
 
-The Context Engine is a powerful local analysis tool for your codebase, featuring AST-powered symbol search, dependency graphing, and agent-driven workflow scaffolding.
+The Context Engine works with any MCP-compliant client (Antigravity, Claude Desktop, customized agents).
 
 ## Prerequisites
 
-- **Node.js**: v18 or higher
+- **Node.js**: v18 or higher (LTS recommended)
 - **Git**: Installed and available on PATH
 
 ## Installation
 
-1. **Clone the repository** (if you haven't already) and navigate to the directory:
+1. **Clone the repository**:
    ```bash
-   cd context-engine
+   git clone https://github.com/ibayot/local-context-engine.git
+   cd local-context-engine
    ```
 
-2. **Install dependencies**:
+2. **Install & Build**:
    ```bash
    npm install
-   ```
-
-3. **Build the project**:
-   ```bash
    npm run build
    ```
 
-## Configuration
+---
 
-The engine is designed to work out-of-the-box.
+## Configuration Options
 
-### 1. Code Analysis (Core)
-The engine automatically indexes your workspace to provide:
-- AST Analysis (`find_symbol`, `dependency_graph`, `code_metrics`)
-- Local Utilities (`find_todos`, `project_structure`, `git_context`)
-- Security Scanning (`scan_security`)
+Choose the valid transport mode that fits your workflow.
 
-### 2. BMAD Workflow (Agent-Driven)
-The engine supports the **BMAD** (Breakthrough Method for Agile AI-Driven Development) workflow by providing tools for your AI Agent (Claude, Gemini, etc.) to use.
+### Option A: Standard Integration (Stdio) - **Recommended**
 
-- **Tool**: `scaffold_bmad`
-- **Usage**: Your agent can call this tool to set up the `.bmad/` directory with `01_PRD.md`, `02_ARCH.md`, and `03_TASKS.md` templates.
-- **Agent Role**: The agent then fills in these documents based on your goals, acting as the Product Owner, Architect, and Engineer.
+Best for: **Antigravity**, **Claude Desktop**, single-project use.
+The server starts automatically when you open your agent.
 
-> **Note:** Optional local LLM features (Ollama) are available in the codebase but **disabled by default** to minimize resource usage.
+**Add to your MCP Configuration (`mcp_config.json` or similar):**
 
-## verifying Installation
+```json
+{
+  "mcpServers": {
+    "context-engine": {
+      "command": "node",
+      "args": [
+        "C:/path/to/local-context-engine/dist/index.js",
+        "--index" 
+      ],
+      "env": {}
+    }
+  }
+}
+```
 
-1. **Start the MCP Server** (usually handled by your agent/IDE):
+> **Note**: Do not set `--workspace`. By omitting it, the engine automatically indexes the folder you have open in your IDE.
+
+### Option B: Persistent Background Server (HTTP)
+
+Best for: **Multi-project setups**, troubleshooting connection issues, or if you prefer a "always-on" service.
+
+1. **Start the Server**:
    ```bash
-   node build/index.js
+   # Starts on port 3334 by default
+   npm run start:http
+   
+   # Or specify a custom port
+   npm run start:http -- --port 4000
    ```
 
-2. **Check Status**:
-   - Use the `index_status` tool to see indexing progress.
-   - Use `tool_manifest` to see available capabilities.
+2. **Configure Your Client**:
+   Point your MCP client (Antigravity/Claude) to: `http://localhost:3334/mcp` (SSE Endpoint).
+
+---
 
 ## Troubleshooting
 
-- **High RAM Usage**: 
-  - Code analysis (AST/Vector Store) runs efficiently in background.
-  - If you experience issues, the engine will automatically limit concurrency.
+### "Stdio Blocking" / Agent Can't Message
+**Symptoms**: The agent freezes or can't send messages while the MCP server is running.
+**Fix**:
+1. Ensure you are using v1.2.0 (check `package.json`).
+2. Verify you are NOT using `console.log` in your own customizations (use `console.error` only).
+3. Switch to **Option B (HTTP Transport)** as a fallback.
+
+### "Indexing Failed"
+**Symptoms**: `index_status` shows error or stuck state.
+**Fix**:
+1. Run the `reindex_workspace` tool.
+2. Check `error.log` if available.
+3. Ensure no massive binary files (videos, dlls) are in your source folders. Add them to `.contextignore`.
+
+### High RAM Usage
+The vector store and AST analysis run in-memory for speed. Large monorepos (>50k LOC) may usage 1-2GB RAM.
+**Fix**:
+- Add `node_modules`, `dist`, `build` to `.contextignore`.

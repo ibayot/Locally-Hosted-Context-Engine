@@ -50,6 +50,7 @@ export interface IndexStatus {
   fileCount: number;
   isStale: boolean;
   lastError?: string;
+  restoredFromStateFile?: boolean;
 }
 
 export interface IndexResult {
@@ -1111,10 +1112,13 @@ export class ContextServiceClient {
       // Try to restore from saved state
       if (fs.existsSync(stateFilePath)) {
         console.error(`Restoring context from ${stateFilePath}`);
-        // LocalContextService loads its own state on create(), so we skip explicit import here.
-        // We might just log that we found a state file but let create() handle it.
-        console.log('[LocalContextService] State file exists, will be loaded during creation.');
-        // throw new Error('Skipping importFromFile for local mode');
+        // ✅ FIX: Actually create the LocalContextService instance before returning
+        console.error('[LocalContextService] State file exists, will be loaded during creation.');
+
+        // Create the service - it will automatically load from state file
+        this.context = await LocalContextService.create(this.workspacePath);
+        this.restoredFromStateFile = true;
+
         console.error('Context restored successfully');
         try {
           const stats = fs.statSync(stateFilePath);
@@ -1122,6 +1126,7 @@ export class ContextServiceClient {
           this.updateIndexStatus({
             status: 'idle',
             lastIndexed: restoredAt,
+            restoredFromStateFile: true,
           });
         } catch {
           // ignore stat errors, keep defaults
@@ -1159,19 +1164,22 @@ export class ContextServiceClient {
 
     // Auto-index workspace if no state file exists (unless skipped)
     if (!this.skipAutoIndexOnce && !options?.skipAutoIndex) {
-      console.error('No existing index found - auto-indexing workspace...');
-      try {
-        await this.indexWorkspace();
-        console.error('Auto-indexing completed');
-      } catch (error) {
-        console.error('Auto-indexing failed (you can manually call index_workspace tool):', error);
-        // Don't throw - allow server to start even if auto-indexing fails
-        // User can manually trigger indexing later
-        this.updateIndexStatus({
-          status: 'error',
-          lastError: String(error),
+      console.error('No existing index found - starting background auto-indexing...');
+      console.error('Server is ready (indexing in progress)');
+
+      // Run indexing in background - don't await
+      this.indexWorkspace()
+        .then(() => {
+          console.error('Background auto-indexing completed successfully');
+        })
+        .catch(error => {
+          console.error('Background auto-indexing failed (you can manually call index_workspace tool):', error);
+          // Don't throw - allow server to continue
+          this.updateIndexStatus({
+            status: 'error',
+            lastError: String(error),
+          });
         });
-      }
     } else {
       this.skipAutoIndexOnce = false;
       this.updateIndexStatus({ status: 'idle' });

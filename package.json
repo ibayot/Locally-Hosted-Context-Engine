@@ -8,6 +8,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "tsx --env-file=.env src/index.ts",
+    "start:http": "tsx --env-file=.env src/index.ts --transport http",
     "start:dist": "node --env-file=.env --import tsx dist/index.js",
     "prepare": "npm run build",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",

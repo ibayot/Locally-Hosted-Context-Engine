@@ -1,50 +1,76 @@
-# Context Engine Capabilities (v1.2.0)
+# Context Engine Capabilities & Tools (v1.2.0)
 
-The **Context Engine** is a local-first MCP server designed to be the "brain" for your AI Agents. It provides deep codebase understanding, structured workflow automation, and persistent memory without relying on cloud services for analysis.
-
-## Core Capabilities
-
-### 1. 🧠 Context & RAG (Retrieval-Augmented Generation)
-The engine maintains a semantic index of your codebase to answer natural language queries.
-- **`get_context_for_prompt`** (Primary Tool): Retrieves highly relevant code snippets, file summaries, and related memories for a given query. Optimized for LLM context windows.
-- **`semantic_search`**: Performs pure semantic search on the vector index.
-- **`get_file`**: Reads full file contents with line-range support.
-
-### 2. 🏗️ BMAD Workflow (Agent-Driven)
-Implements the **Breakthrough Method for Agile AI-Driven Development**.
-- **`scaffold_bmad`**: Generates a standard project structure (`.bmad/`) with templates for:
-    - `01_PRD.md` (Product Requirements)
-    - `02_ARCH.md` (Architecture)
-    - `03_TASKS.md` (Sprint Plan)
-  *Includes embedded instructions for the Agent to act as Product Owner, Architect, and Engineer.*
-- **`get_bmad_guidelines`**: Provides role-specific guidelines (e.g., "What should the QA Engineer check?").
-
-### 3. 🔍 Deep Code Analysis (AST-Powered)
-Uses Abstract Syntax Trees to understand code structure, not just text.
-- **`find_symbol`**: Locates functions, classes, and definitions by name.
-- **`dependency_graph`**: Analyzes imports/exports to show how modules relate.
-- **`code_metrics`**: Calculates complexity, LOC, and other stats for files.
-- **`find_duplicates`**: Detects copy-pasted code blocks to reduce technical debt.
-
-### 4. 🛡️ Security & Quality
-- **`scan_security`**: Scans for secrets (API keys, tokens) and common vulnerabilities.
-- **`find_todos`**: Aggregates `TODO`, `FIXME`, and `HACK` comments.
-- **`validate_content`**: Checks code chunks for syntax errors (JSON/JS) before files are written.
-
-### 5. 💾 Long-Term Memory
-Allows the agent to learn from user preferences and past decisions.
-- **`add_memory`**: Stores facts, preferences, or decisions that persist across sessions.
-- **`list_memories`**: Retrieves stored memories.
-*Memories are automatically injected into `get_context_for_prompt` when relevant.*
-
-### 6. 🛠️ Local Utilities
-- **`project_structure`**: Generates a tree view of the file system.
-- **`file_statistics`**: Provides metadata (size, created/modified times).
-- **`git_context`**: Analyzes git history and diffs (requires `git`).
+The Context Engine provides 27 specialized tools to give your AI agent deep understanding of your codebase and workflow capabilities.
 
 ---
 
-## Architecture
-- **Local Vector Store**: Uses a file-based vector index (in `.augment/` or `.context-engine/`) for fast retrieval.
-- **TypeScript/Node.js**: Built for performance and extensibility.
-- **MCP Standard**: Fully compatible with the [Model Context Protocol](https://modelcontextprotocol.io).
+## 🧠 Core Context (6 Tools)
+*Primary Interface for Understanding Code*
+
+| Tool | Description | Best For |
+|------|-------------|----------|
+| **`get_context_for_prompt`** | Smart retrieval of relevant code + summaries + memory. | **ALWAYS start here.** Prepares context for any task. |
+| **`codebase_retrieval`** | Semantic RAG search across the entire workspace. | "How does authentication work?" |
+| **`semantic_search`** | Find code snippets by meaning/concept. | "Find error handling logic for API." |
+| **`get_file`** | Read full file contents. | Deep reading of specific files. |
+| **`tool_manifest`** | List all available tools. | dynamic discovery. |
+| **`index_workspace`** | Force a re-index of the codebase. | Initial setup or after mass changes. |
+
+## 🏗️ Analysis & Insight (8 Tools)
+*AST-Powered Structural Understanding*
+
+| Tool | Description | Best For |
+|------|-------------|----------|
+| **`find_symbol`** | Locate functions/classes/types by name. | "Where is `UserService` defined?" |
+| **`dependency_graph`** | Map imports and exports for a file. | "What breaks if I change this file?" |
+| **`code_metrics`** | Analyze complexity, lines of code, nesting. | Refactoring and quality checks. |
+| **`project_structure`** | Tree view of folders and files. | Exploring a new codebase. |
+| **`file_stats`** | Size, type, and counts of files. | Repository overview. |
+| **`git_context`** | Read commits, diffs, and blame. | "Who changed this line and why?" |
+| **`run_static_analysis`** | Run `tsc` and `semgrep` locally. | Detecting bugs before implementation. |
+| **`scan_security`** | Detect secrets/API keys. | Safety checks. |
+
+## 📅 Planning & Workflow (9 Tools)
+*Agent-Driven Project Management*
+
+| Tool | Description | Actions |
+|------|-------------|---------|
+| **`visualize_plan`** | Generate Mermaid diagrams of the plan. | See dependencies visually. |
+| **Plan CRUD** | Manage implementation plans. | `save_plan`, `load_plan`, `list_plans`, `delete_plan` |
+| **Step Management** | Track execution progress. | `start_step`, `complete_step` |
+| **History** | Review plan changes. | `view_progress`, `view_history` |
+
+## 🧠 Memory (2 Tools)
+*Cross-Session Recall*
+
+| Tool | Description |
+|------|-------------|
+| **`add_memory`** | Store facts, user preferences, or architectural decisions. |
+| **`list_memories`** | Retrieve stored knowledge. |
+
+## 🛡️ Reactive Review (5 Tools)
+*Automated QA & Code Review*
+
+| Tool | Description |
+|------|-------------|
+| **`reactive_review_pr`** | Compare changes against main branch. |
+| **`scrub_secrets`** | Redact API keys from text. |
+| **Session Control** | `get_review_status`, `pause_review`, `resume_review`, `get_review_telemetry` |
+
+## 🤖 BMAD Workflow (2 Tools)
+*Agent-Driven Development Framework*
+
+| Tool | Description | Usage |
+|------|-------------|-------|
+| **`scaffold_bmad`** | Create `01_PRD`, `02_ARCH`, `03_TASKS` templates. | Start of every new feature. |
+| **`get_bmad_guidelines`** | Retrieve role-specific instructions. | "How should a Product Owner act?" |
+
+---
+
+## 💡 How to Use Effective Context
+
+### The "Golden Flow" for Agents
+1. **Explore**: `project_structure` → `codebase_retrieval` ("How does X work?")
+2. **Deepen**: `find_symbol` (definitions) → `get_file` (implementation details)
+3. **Plan**: `scaffold_bmad` → `save_plan`
+4. **Execute**: `start_step` → Make Changes → `run_static_analysis` → `complete_step`

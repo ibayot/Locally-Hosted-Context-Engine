@@ -17,10 +17,16 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import { createRequire } from 'module';
+import * as crypto from 'crypto';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../../package.json');
 
 import { ContextServiceClient } from './serviceClient.js';
 import { semanticSearchTool, handleSemanticSearch } from './tools/search.js';
@@ -60,21 +66,17 @@ import {
   handleLoadPlan,
   handleListPlans,
   handleDeletePlan,
-  handleRequestApproval,
-  handleRespondApproval,
   handleStartStep,
   handleCompleteStep,
-  handleFailStep,
   handleViewProgress,
   handleViewHistory,
-  handleComparePlanVersions,
-  handleRollbackPlan,
 } from './tools/planManagement.js';
-import { reviewChangesTool, handleReviewChanges } from './tools/codeReview.js';
-import { reviewGitDiffTool, handleReviewGitDiff } from './tools/gitReview.js';
-import { reviewDiffTool, handleReviewDiff } from './tools/reviewDiff.js';
-import { reviewAutoTool, handleReviewAuto } from './tools/reviewAuto.js';
-import { checkInvariantsTool, handleCheckInvariants } from './tools/checkInvariants.js';
+// Code review tools (LLM-powered, disabled)
+// import { reviewChangesTool, handleReviewChanges } from './tools/codeReview.js';
+// import { reviewGitDiffTool, handleReviewGitDiff } from './tools/gitReview.js';
+// import { reviewDiffTool, handleReviewDiff } from './tools/reviewDiff.js';
+// import { reviewAutoTool, handleReviewAuto } from './tools/reviewAuto.js';
+// import { checkInvariantsTool, handleCheckInvariants } from './tools/checkInvariants.js';
 import { runStaticAnalysisTool, handleRunStaticAnalysis } from './tools/staticAnalysis.js';
 import {
   reactiveReviewTools,
@@ -84,21 +86,20 @@ import {
   handleResumeReview,
   handleGetReviewTelemetry,
   handleScrubSecrets,
-  handleValidateContent,
   scrubSecretsTool,
-  validateContentTool,
 } from './tools/reactiveReview.js';
 import { getBmadGuidelinesTool, handleGetBmadGuidelines } from './tools/bmad.js';
 import { scanSecurityTool, handleScanSecurity } from './tools/security.js';
-import { findTodosTool, handleFindTodos } from './tools/todoTracker.js';
 import { fileStatsTool, handleFileStats } from './tools/fileStats.js';
 import { projectStructureTool, handleProjectStructure } from './tools/projectStructure.js';
 import { gitContextTool, handleGitContext } from './tools/gitContext.js';
 import { findSymbolTool, handleFindSymbol } from './tools/symbolIndex.js';
 import { dependencyGraphTool, handleDependencyGraph } from './tools/dependencyGraph.js';
 import { codeMetricsTool, handleCodeMetrics } from './tools/codeMetrics.js';
-import { findDuplicatesTool, handleFindDuplicates } from './tools/duplicateDetector.js';
-import { ollamaStatusTool, handleOllamaStatus } from './tools/ollamaStatus.js';
+// Removed tools (imports kept commented for reference)
+// import { findTodosTool, handleFindTodos } from './tools/todoTracker.js';
+// import { findDuplicatesTool, handleFindDuplicates } from './tools/duplicateDetector.js';
+// import { ollamaStatusTool, handleOllamaStatus } from './tools/ollamaStatus.js';
 // import { bmadWorkflowTool, handleBmadWorkflow } from './tools/bmadWorkflow.js';
 import { scaffoldBmadTool, handleScaffoldBmad } from './tools/scaffoldBmad.js';
 import { FileWatcher } from '../watcher/index.js';
@@ -138,7 +139,7 @@ export class ContextEngineMCPServer {
     this.server = new Server(
       {
         name: serverName,
-        version: '1.0.0',
+        version: pkg.version,
       },
       {
         capabilities: {
@@ -314,60 +315,52 @@ export class ContextEngineMCPServer {
   }
 
   private setupHandlers(): void {
-    // List available tools
+    // Filter plan management tools to keep only core ones (27 total tools)
+    const corePlanTools = planManagementTools.filter(tool =>
+      !['compare_plan_versions', 'rollback_plan', 'fail_step', 'request_approval', 'respond_approval'].includes(tool.name)
+    );
+
+    // Filter reactive review tools - scrubSecrets listed separately, validateContent removed
+    const coreReviewTools = reactiveReviewTools.filter(tool =>
+      !['scrub_secrets', 'validate_content'].includes(tool.name)
+    );
+
+    // List available tools (27 core tools - pruned from 39)
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       return {
         tools: [
+          // === CORE CONTEXT (6) ===
           indexWorkspaceTool,
           codebaseRetrievalTool,
           semanticSearchTool,
           getFileTool,
           getContextTool,
-          // enhancePromptTool, // Disabled: Requires LLM
+          toolManifestTool,
+          // === INDEX MANAGEMENT (3) ===
           indexStatusTool,
           reindexWorkspaceTool,
           clearIndexTool,
-          toolManifestTool,
-          // Memory tools (v1.4.1)
+          // === MEMORY (2) ===
           addMemoryTool,
           listMemoriesTool,
-          // Planning tools - LLM-powered via Ollama (Disabled by user request)
-          // createPlanTool,
-          // refinePlanTool,
-          visualizePlanTool, // Keep visualize
-          // executePlanTool,
-          // Plan management tools - Pure I/O
-          ...planManagementTools,
-          // Code Review tools (v1.5.0) - LLM-powered via Ollama (Disabled)
-          // reviewChangesTool,
-          // reviewGitDiffTool,
-          // reviewDiffTool,
-          // reviewAutoTool,
-          checkInvariantsTool,
+          // === PLANNING (9) ===
+          visualizePlanTool,
+          ...corePlanTools,
+          // === CODE ANALYSIS (8) ===
           runStaticAnalysisTool,
-          // Reactive Review tools
-          ...reactiveReviewTools,
-          // Standalone utilities
-          scrubSecretsTool,
-          validateContentTool,
-          // New Tools (v3.0 -> v1.2)
-          getBmadGuidelinesTool,
           scanSecurityTool,
-          // Ollama LLM status (disabled but kept for future)
-          // ollamaStatusTool,
-          // BMAD workflow (Agent-driven now)
-          // bmadWorkflowTool, // Replaced by scaffold
-          scaffoldBmadTool,
-          // New Tools (v4.0) - Local utilities
-          findTodosTool,
           fileStatsTool,
           projectStructureTool,
           gitContextTool,
-          // New Tools (v4.1) - AST-powered
           findSymbolTool,
           dependencyGraphTool,
           codeMetricsTool,
-          findDuplicatesTool,
+          // === REACTIVE REVIEW (6) ===
+          ...coreReviewTools,
+          scrubSecretsTool,
+          // === BMAD (2) ===
+          getBmadGuidelinesTool,
+          scaffoldBmadTool,
         ],
       };
     });
@@ -473,14 +466,6 @@ export class ContextEngineMCPServer {
             result = await handleDeletePlan(args as Record<string, unknown>);
             break;
 
-          case 'request_approval':
-            result = await handleRequestApproval(args as Record<string, unknown>);
-            break;
-
-          case 'respond_approval':
-            result = await handleRespondApproval(args as Record<string, unknown>);
-            break;
-
           case 'start_step':
             result = await handleStartStep(args as Record<string, unknown>);
             break;
@@ -489,24 +474,12 @@ export class ContextEngineMCPServer {
             result = await handleCompleteStep(args as Record<string, unknown>);
             break;
 
-          case 'fail_step':
-            result = await handleFailStep(args as Record<string, unknown>);
-            break;
-
           case 'view_progress':
             result = await handleViewProgress(args as Record<string, unknown>);
             break;
 
           case 'view_history':
             result = await handleViewHistory(args as Record<string, unknown>);
-            break;
-
-          case 'compare_plan_versions':
-            result = await handleComparePlanVersions(args as Record<string, unknown>);
-            break;
-
-          case 'rollback_plan':
-            result = await handleRollbackPlan(args as Record<string, unknown>);
             break;
 
           // Code Review tools - LLM-powered via Ollama (Disabled)
@@ -528,9 +501,7 @@ export class ContextEngineMCPServer {
             break;
           */
 
-          case 'check_invariants':
-            result = await handleCheckInvariants(args as any, this.serviceClient);
-            break;
+          // check_invariants removed (use linters instead)
 
           case 'run_static_analysis':
             result = await handleRunStaticAnalysis(args as any, this.serviceClient);
@@ -561,9 +532,7 @@ export class ContextEngineMCPServer {
             result = await handleScrubSecrets(args as any);
             break;
 
-          case 'validate_content':
-            result = await handleValidateContent(args as any);
-            break;
+          // validate_content removed (use scan_security instead)
 
           // Ollama LLM status
           /*
@@ -593,9 +562,7 @@ export class ContextEngineMCPServer {
             break;
 
           // New Tools (v4.0) - Local utilities
-          case 'find_todos':
-            result = await handleFindTodos(args as any, this.serviceClient);
-            break;
+          // find_todos removed (trivial grep)
 
           case 'file_statistics':
             result = await handleFileStats(args as any, this.serviceClient);
@@ -622,9 +589,7 @@ export class ContextEngineMCPServer {
             result = await handleCodeMetrics(args as any, this.serviceClient);
             break;
 
-          case 'find_duplicates':
-            result = await handleFindDuplicates(args as any, this.serviceClient);
-            break;
+          // find_duplicates removed (low value)
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -660,37 +625,62 @@ export class ContextEngineMCPServer {
     });
   }
 
-  async run(): Promise<void> {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+  /**
+   * Start the MCP server.
+   * @param options.transport - 'stdio' (default) or 'http' (StreamableHTTP, frees stdio for Antigravity).
+   * @param options.port      - HTTP port when transport is 'http' (default 3334).
+   */
+  async run(options?: { transport?: 'stdio' | 'http'; port?: number }): Promise<void> {
+    const transportType = options?.transport || 'stdio';
 
+    if (transportType === 'http') {
+      // ── Streamable HTTP transport ───────────────────────────────
+      // Uses HTTP POST/GET instead of stdio → Antigravity messaging stays clear.
+      const { createMcpExpressApp } = await import('@modelcontextprotocol/sdk/server/express.js');
+      const app = createMcpExpressApp();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+      });
+      await this.server.connect(transport);
+
+      // Route all MCP traffic through /mcp
+      app.all('/mcp', async (req: any, res: any) => {
+        await transport.handleRequest(req, res, req.body);
+      });
+
+      const port = options?.port || 3334;
+      app.listen(port, () => {
+        this.printBanner('http', port);
+      });
+    } else {
+      // ── Default stdio transport ─────────────────────────────────
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
+      this.printBanner('stdio');
+    }
+  }
+
+  private printBanner(transport: string, port?: number): void {
     console.error('='.repeat(60));
-    console.error('Context Engine MCP Server v1.6.0');
+    console.error(`Context Engine MCP Server v${pkg.version}`);
     console.error('='.repeat(60));
-    console.error(`Workspace: ${this.workspacePath}`);
-    console.error('Transport: stdio');
-    console.error(`Watcher: ${this.enableWatcher ? 'enabled' : 'disabled'}`);
+    console.error(`Workspace : ${this.workspacePath}`);
+    if (transport === 'http') {
+      console.error(`Transport : StreamableHTTP on port ${port}`);
+      console.error(`Endpoint  : http://localhost:${port}/mcp`);
+    } else {
+      console.error('Transport : stdio');
+    }
+    console.error(`Watcher   : ${this.enableWatcher ? 'enabled' : 'disabled'}`);
     console.error('');
-    console.error('Available tools (39 total):');
-    console.error('  Core Context:');
-    console.error('    - index_workspace, codebase_retrieval, semantic_search');
-    console.error('    - get_file, get_context_for_prompt, enhance_prompt');
-    console.error('  Index Management:');
-    console.error('    - index_status, reindex_workspace, clear_index, tool_manifest');
-    console.error('  Memory (v1.4.1):');
-    console.error('    - add_memory, list_memories');
-    console.error('  Planning (v1.4.0):');
-    console.error('    - create_plan, refine_plan, visualize_plan');
-    console.error('    - save_plan, load_plan, list_plans, delete_plan');
-    console.error('    - request_approval, respond_approval');
-    console.error('    - start_step, complete_step, fail_step, view_progress');
-    console.error('    - view_history, compare_plan_versions, rollback_plan');
-    console.error('  Code Review (v1.5.0):');
-    console.error('    - review_changes, review_git_diff, review_diff, review_auto, check_invariants, run_static_analysis');
-    console.error('  Reactive Review (v1.6.0):');
-    console.error('    - reactive_review_pr, get_review_status');
-    console.error('    - pause_review, resume_review, get_review_telemetry');
-    console.error('    - scrub_secrets, validate_content');
+    console.error('Available tools (27 core):');
+    console.error('  Core     : index_workspace, semantic_search, get_context_for_prompt, get_file, codebase_retrieval, tool_manifest');
+    console.error('  Index    : index_status, reindex_workspace, clear_index');
+    console.error('  Memory   : add_memory, list_memories');
+    console.error('  Planning : visualize_plan, save/load/list/delete_plan, start/complete_step, view_progress/history');
+    console.error('  Analysis : run_static_analysis, scan_security, file_stats, project_structure, git_context, find_symbol, dependency_graph, code_metrics');
+    console.error('  Review   : reactive_review_pr, get_review_status, pause/resume_review, get_review_telemetry, scrub_secrets');
+    console.error('  BMAD     : scaffold_bmad, get_bmad_guidelines');
     console.error('');
     console.error('Server ready. Waiting for requests...');
     console.error('='.repeat(60));
