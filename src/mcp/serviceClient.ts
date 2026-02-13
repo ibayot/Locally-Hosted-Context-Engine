@@ -26,6 +26,10 @@ import { featureEnabled } from '../config/features.js';
 import { envMs } from '../config/env.js';
 import { incCounter, observeDurationMs, setGauge } from '../metrics/metrics.js';
 import { JsonIndexStateStore, type IndexStateFile } from './indexStateStore.js';
+import { log } from '../utils/logger.js';
+import { SQLiteVectorStore, nativeModulesAvailable } from '../local/sqliteStore.js';
+import { LocalVectorStore } from '../local/store.js';
+import { KnowledgeGraph } from '../local/knowledgeGraph.js';
 
 // ============================================================================
 // Type Definitions
@@ -317,7 +321,7 @@ class SearchQueue {
       item.resolve(result);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[SearchQueue] Request failed: ${errorMessage}`);
+      log.error('[SearchQueue] Request failed', { error: errorMessage });
       item.reject(error instanceof Error ? error : new Error(String(error)));
     } finally {
       this.running = false;
@@ -756,6 +760,8 @@ interface IndexFingerprintFile {
 export class ContextServiceClient {
   private workspacePath: string;
   private context: LocalContextService | null = null;
+  private vectorStore: SQLiteVectorStore | LocalVectorStore | null = null;
+  private knowledgeGraph: KnowledgeGraph | null = null;
   private initPromise: Promise<void> | null = null;
   private indexChain: Promise<void> = Promise.resolve();
   private indexStateStore: JsonIndexStateStore | null = null;
@@ -905,10 +911,10 @@ export class ContextServiceClient {
         const patterns = this.parseIgnoreFile(content);
         this.ignorePatterns.push(...patterns);
         if (debugIndex) {
-          console.error(`Loaded ${patterns.length} patterns from .gitignore`);
+          log.info(`Loaded ${patterns.length} patterns from .gitignore`);
         }
       } catch (error) {
-        console.error('Error loading .gitignore:', error);
+        log.error('Error loading .gitignore', { error: String(error) });
       }
     }
 
@@ -921,16 +927,16 @@ export class ContextServiceClient {
           const patterns = this.parseIgnoreFile(content);
           this.ignorePatterns.push(...patterns);
           if (debugIndex) {
-            console.error(`Loaded ${patterns.length} patterns from ${ignoreFileName}`);
+            log.info(`Loaded ${patterns.length} patterns from ${ignoreFileName}`);
           }
         } catch (error) {
-          console.error(`Error loading ${ignoreFileName}:`, error);
+          log.error(`Error loading ${ignoreFileName}`, { error: String(error) });
         }
       }
     }
 
     if (debugIndex) {
-      console.error(`Total ignore patterns loaded: ${this.ignorePatterns.length}`);
+      log.info(`Total ignore patterns loaded: ${this.ignorePatterns.length}`);
     }
     this.ignorePatternsLoaded = true;
   }
@@ -1103,7 +1109,7 @@ export class ContextServiceClient {
 
     if (offlineMode && this.isRemoteApiUrl(apiUrl)) {
       const message = 'Offline mode enforced (CONTEXT_ENGINE_OFFLINE_ONLY=1) but AUGMENT_API_URL points to a remote endpoint. Set it to a local endpoint (e.g., http://localhost) or disable offline mode.';
-      console.error(message);
+      log.info(message);
       this.updateIndexStatus({ status: 'error', lastError: message });
       throw new Error(message);
     }
@@ -1111,15 +1117,15 @@ export class ContextServiceClient {
     try {
       // Try to restore from saved state
       if (fs.existsSync(stateFilePath)) {
-        console.error(`Restoring context from ${stateFilePath}`);
+        log.info(`Restoring context from ${stateFilePath}`);
         // ✅ FIX: Actually create the LocalContextService instance before returning
-        console.error('[LocalContextService] State file exists, will be loaded during creation.');
+        log.info('[LocalContextService] State file exists, will be loaded during creation.');
 
         // Create the service - it will automatically load from state file
         this.context = await LocalContextService.create(this.workspacePath);
         this.restoredFromStateFile = true;
 
-        console.error('Context restored successfully');
+        log.info('Context restored successfully');
         try {
           const stats = fs.statSync(stateFilePath);
           const restoredAt = stats.mtime.toISOString();
@@ -1134,11 +1140,11 @@ export class ContextServiceClient {
         return;
       }
     } catch (error) {
-      console.error('Failed to restore context state, creating new context:', error);
+      log.error('Failed to restore context state, creating new context', { error: String(error) });
       // Delete corrupted state file
       try {
         fs.unlinkSync(stateFilePath);
-        console.error('Deleted corrupted state file');
+        log.info('Deleted corrupted state file');
       } catch {
         // Ignore deletion errors
       }
@@ -1146,34 +1152,54 @@ export class ContextServiceClient {
 
     if (offlineMode) {
       const message = `Offline mode is enabled but no saved index found at ${stateFilePath}. Connect online once to build the index or disable CONTEXT_ENGINE_OFFLINE_ONLY.`;
-      console.error(message);
+      log.info(message);
       this.updateIndexStatus({ status: 'error', lastError: message });
       throw new Error(message);
     }
 
     // Create new context
-    console.error('Initializing Local Context Engine...');
+    log.info('Initializing Local Context Engine...');
     try {
       this.context = await LocalContextService.create(this.workspacePath);
-      console.error('[Local] LocalContextService initialized successfully.');
+      log.info('[Local] LocalContextService initialized successfully.');
       this.restoredFromStateFile = false;
+      
+      // Initialize vector store (SQLite or fallback to JSON)
+      if (featureEnabled('use_sqlite_storage') && featureEnabled('use_hnsw_index') && nativeModulesAvailable) {
+        log.info('Initializing SQLite vector store with HNSW index');
+        this.vectorStore = new SQLiteVectorStore(this.workspacePath);
+      } else {
+        if (featureEnabled('use_sqlite_storage') && !nativeModulesAvailable) {
+          log.warn('SQLite/HNSW requested but native modules unavailable - falling back to JSON store', {
+            hint: 'Install Visual Studio Build Tools with "Desktop development with C++" workload'
+          });
+        }
+        log.info('Using default JSON vector store');
+        this.vectorStore = new LocalVectorStore(this.workspacePath);
+      }
+      
+      // Initialize knowledge graph
+      if (featureEnabled('enable_knowledge_graph')) {
+        log.info('Initializing knowledge graph');
+        this.knowledgeGraph = new KnowledgeGraph(this.workspacePath);
+      }
     } catch (createError) {
-      console.error('Failed to create Local Context Engine:', createError);
+      log.error('Failed to create Local Context Engine', { error: String(createError) });
       throw createError;
     }
 
     // Auto-index workspace if no state file exists (unless skipped)
     if (!this.skipAutoIndexOnce && !options?.skipAutoIndex) {
-      console.error('No existing index found - starting background auto-indexing...');
-      console.error('Server is ready (indexing in progress)');
+      log.info('No existing index found - starting background auto-indexing...');
+      log.info('Server is ready (indexing in progress)');
 
       // Run indexing in background - don't await
       this.indexWorkspace()
         .then(() => {
-          console.error('Background auto-indexing completed successfully');
+          log.info('Background auto-indexing completed successfully');
         })
         .catch(error => {
-          console.error('Background auto-indexing failed (you can manually call index_workspace tool):', error);
+          log.error('Background auto-indexing failed (you can manually call index_workspace tool)', { error: String(error) });
           // Don't throw - allow server to continue
           this.updateIndexStatus({
             status: 'error',
@@ -1196,9 +1222,9 @@ export class ContextServiceClient {
       const stateFilePath = this.getStateFilePath();
       await this.context.exportToFile(stateFilePath);
       this.writeIndexFingerprintFile(crypto.randomUUID());
-      console.error(`Context state saved to ${stateFilePath}`);
+      log.info(`Context state saved to ${stateFilePath}`);
     } catch (error) {
-      console.error('Failed to save context state:', error);
+      log.error('Failed to save context state', { error: String(error) });
     }
   }
 
@@ -1248,7 +1274,7 @@ export class ContextServiceClient {
         // Skip default excluded directories
         if (entry.isDirectory() && DEFAULT_EXCLUDED_DIRS.has(entry.name)) {
           if (debugIndex) {
-            console.error(`Skipping excluded directory: ${relativePath}`);
+            log.debug(`Skipping excluded directory: ${relativePath}`);
           }
           continue;
         }
@@ -1256,7 +1282,7 @@ export class ContextServiceClient {
         // Check against loaded ignore patterns
         if (this.shouldIgnorePath(relativePath)) {
           if (debugIndex) {
-            console.error(`Skipping ignored path: ${relativePath}`);
+            log.debug(`Skipping ignored path: ${relativePath}`);
           }
           continue;
         }
@@ -1270,7 +1296,7 @@ export class ContextServiceClient {
             const stats = fs.statSync(fullPath);
             if (stats.size > MAX_FILE_SIZE) {
               if (debugIndex) {
-                console.error(`Skipping large file during discovery: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB > ${MAX_FILE_SIZE / 1024 / 1024}MB limit)`);
+                log.debug(`Skipping large file during discovery: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB > ${MAX_FILE_SIZE / 1024 / 1024}MB limit)`);
               }
               continue;
             }
@@ -1281,7 +1307,7 @@ export class ContextServiceClient {
         }
       }
     } catch (error) {
-      console.error(`Error discovering files in ${dirPath}:`, error);
+      log.error(`Error discovering files in ${dirPath}`, { error: String(error) });
     }
 
     return files;
@@ -1306,7 +1332,7 @@ export class ContextServiceClient {
       const stats = fs.statSync(fullPath);
 
       if (stats.size > MAX_FILE_SIZE) {
-        console.error(`Skipping large file: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
+        log.debug(`Skipping large file: ${relativePath} (${(stats.size / 1024 / 1024).toFixed(2)}MB)`);
         return null;
       }
 
@@ -1314,13 +1340,13 @@ export class ContextServiceClient {
 
       // Check for binary content
       if (this.isBinaryContent(content)) {
-        console.error(`Skipping binary file: ${relativePath}`);
+        log.debug(`Skipping binary file: ${relativePath}`);
         return null;
       }
 
       return content;
     } catch (error) {
-      console.error(`Error reading file ${relativePath}:`, error);
+      log.error(`Error reading file ${relativePath}`, { error: String(error) });
       return null;
     }
   }
@@ -1629,12 +1655,12 @@ export class ContextServiceClient {
    */
   enableCommitCache(commitHash: string): void {
     if (process.env.REACTIVE_COMMIT_CACHE !== 'true') {
-      console.error('[ContextServiceClient] Commit cache feature flag not enabled (set REACTIVE_COMMIT_CACHE=true)');
+      log.info('[ContextServiceClient] Commit cache feature flag not enabled (set REACTIVE_COMMIT_CACHE=true)');
       return;
     }
     this.commitCacheEnabled = true;
     this.currentCommitHash = commitHash;
-    console.error(`[ContextServiceClient] Commit cache enabled for ${commitHash.substring(0, 12)}`);
+    log.info(`[ContextServiceClient] Commit cache enabled for ${commitHash.substring(0, 12)}`);
   }
 
   /**
@@ -1642,7 +1668,7 @@ export class ContextServiceClient {
    */
   disableCommitCache(): void {
     if (this.commitCacheEnabled) {
-      console.error('[ContextServiceClient] Commit cache disabled');
+      log.info('[ContextServiceClient] Commit cache disabled');
     }
     this.commitCacheEnabled = false;
     this.currentCommitHash = null;
@@ -1678,7 +1704,7 @@ export class ContextServiceClient {
 
     // Use setImmediate to avoid blocking the event loop
     setImmediate(async () => {
-      console.error(`[prefetch] Starting prefetch for ${filePaths.length} files`);
+      log.info(`[prefetch] Starting prefetch for ${filePaths.length} files`);
       const startTime = Date.now();
       let successCount = 0;
 
@@ -1687,12 +1713,12 @@ export class ContextServiceClient {
           await this.semanticSearch(`file:${filePath}`, 5);
           successCount++;
         } catch (e) {
-          console.error(`[prefetch] Failed for ${filePath}:`, e);
+          log.error(`[prefetch] Failed for ${filePath}`, { error: String(e) });
         }
       }
 
       const elapsed = Date.now() - startTime;
-      console.error(`[prefetch] Completed: ${successCount}/${filePaths.length} files in ${elapsed}ms`);
+      log.info(`[prefetch] Completed: ${successCount}/${filePaths.length} files in ${elapsed}ms`);
     });
   }
 
@@ -1704,7 +1730,7 @@ export class ContextServiceClient {
   invalidateCommitCache(commitHash?: string): void {
     if (!commitHash) {
       this.clearCache();
-      console.error('[ContextServiceClient] Cleared entire cache');
+      log.info('[ContextServiceClient] Cleared entire cache');
       return;
     }
 

@@ -103,6 +103,16 @@ import { codeMetricsTool, handleCodeMetrics } from './tools/codeMetrics.js';
 // import { bmadWorkflowTool, handleBmadWorkflow } from './tools/bmadWorkflow.js';
 import { scaffoldBmadTool, handleScaffoldBmad } from './tools/scaffoldBmad.js';
 import { FileWatcher } from '../watcher/index.js';
+import { log } from '../utils/logger.js';
+import * as schemas from './schemas.js';
+import { featureEnabled } from '../config/features.js';
+import {
+  githubTools,
+  handleGetGitHubIssues,
+  handleGetGitHubIssue,
+  handleSearchGitHubIssues,
+  handleGetGitHubPRs,
+} from './tools/github.js';
 
 export class ContextEngineMCPServer {
   private server: Server;
@@ -181,7 +191,7 @@ export class ContextEngineMCPServer {
         }),
       ];
 
-      console.error(`[watcher] Loaded ${watcherIgnored.length} ignore patterns`);
+      log.info(`[watcher] Loaded ${watcherIgnored.length} ignore patterns`);
 
       this.fileWatcher = new FileWatcher(
         workspacePath,
@@ -198,7 +208,7 @@ export class ContextEngineMCPServer {
             try {
               await this.serviceClient.indexFiles(paths);
             } catch (error) {
-              console.error('[watcher] Incremental indexing failed:', error);
+              log.error('[watcher] Incremental indexing failed', { error: String(error) });
             }
           },
         },
@@ -254,13 +264,13 @@ export class ContextEngineMCPServer {
     const burstCount = this.deleteBurstCount;
     this.deleteBurstCount = 0;
 
-    console.error(`[watcher] Detected ${burstCount} deletions; scheduling full reindex to prevent stale results`);
+    log.info(`[watcher] Detected ${burstCount} deletions; scheduling full reindex to prevent stale results`);
     this.lastReindexAt = Date.now();
 
     this.reindexInFlight = this.serviceClient.indexWorkspace()
       .then(() => { })
       .catch((e) => {
-        console.error('[watcher] Background reindex after deletions failed:', e);
+        log.error('[watcher] Background reindex after deletions failed', { error: String(e) });
       })
       .finally(() => {
         this.reindexInFlight = null;
@@ -277,7 +287,7 @@ export class ContextEngineMCPServer {
       if (this.isShuttingDown) return;
       this.isShuttingDown = true;
 
-      console.error(`\nReceived ${signal}, shutting down gracefully...`);
+      log.info(`\nReceived ${signal}, shutting down gracefully...`);
 
       try {
         // Clear caches
@@ -291,10 +301,10 @@ export class ContextEngineMCPServer {
         // Close server connection
         await this.server.close();
 
-        console.error('Server shutdown complete');
+        log.info('Server shutdown complete');
         process.exit(0);
       } catch (error) {
-        console.error('Error during shutdown:', error);
+        log.error('Error during shutdown', { error: String(error) });
         process.exit(1);
       }
     };
@@ -304,12 +314,12 @@ export class ContextEngineMCPServer {
 
     // Handle uncaught errors
     process.on('uncaughtException', (error) => {
-      console.error('Uncaught exception:', error);
+      log.error('Uncaught exception', { error: String(error) });
       shutdown('uncaughtException');
     });
 
     process.on('unhandledRejection', (reason) => {
-      console.error('Unhandled rejection:', reason);
+      log.error('Unhandled rejection', { reason: String(reason) });
       // Don't exit on unhandled rejection, just log
     });
   }
@@ -325,44 +335,54 @@ export class ContextEngineMCPServer {
       !['scrub_secrets', 'validate_content'].includes(tool.name)
     );
 
-    // List available tools (27 core tools - pruned from 39)
+    // Conditionally include GitHub tools
+    const enableGitHub = featureEnabled('enable_github_integration');
+    const toolCount = enableGitHub ? 31 : 27;
+
+    // List available tools (27-31 core tools depending on GitHub integration)
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
-      return {
-        tools: [
-          // === CORE CONTEXT (6) ===
-          indexWorkspaceTool,
-          codebaseRetrievalTool,
-          semanticSearchTool,
-          getFileTool,
-          getContextTool,
-          toolManifestTool,
-          // === INDEX MANAGEMENT (3) ===
-          indexStatusTool,
-          reindexWorkspaceTool,
-          clearIndexTool,
-          // === MEMORY (2) ===
-          addMemoryTool,
-          listMemoriesTool,
-          // === PLANNING (9) ===
-          visualizePlanTool,
-          ...corePlanTools,
-          // === CODE ANALYSIS (8) ===
-          runStaticAnalysisTool,
-          scanSecurityTool,
-          fileStatsTool,
-          projectStructureTool,
-          gitContextTool,
-          findSymbolTool,
-          dependencyGraphTool,
-          codeMetricsTool,
-          // === REACTIVE REVIEW (6) ===
-          ...coreReviewTools,
-          scrubSecretsTool,
-          // === BMAD (2) ===
-          getBmadGuidelinesTool,
-          scaffoldBmadTool,
-        ],
-      };
+      const tools = [
+        // === CORE CONTEXT (6) ===
+        indexWorkspaceTool,
+        codebaseRetrievalTool,
+        semanticSearchTool,
+        getFileTool,
+        getContextTool,
+        toolManifestTool,
+        // === INDEX MANAGEMENT (3) ===
+        indexStatusTool,
+        reindexWorkspaceTool,
+        clearIndexTool,
+        // === MEMORY (2) ===
+        addMemoryTool,
+        listMemoriesTool,
+        // === PLANNING (9) ===
+        visualizePlanTool,
+        ...corePlanTools,
+        // === CODE ANALYSIS (8) ===
+        runStaticAnalysisTool,
+        scanSecurityTool,
+        fileStatsTool,
+        projectStructureTool,
+        gitContextTool,
+        findSymbolTool,
+        dependencyGraphTool,
+        codeMetricsTool,
+        // === REACTIVE REVIEW (6) ===
+        ...coreReviewTools,
+        scrubSecretsTool,
+        // === BMAD (2) ===
+        getBmadGuidelinesTool,
+        scaffoldBmadTool,
+      ];
+
+      // Add GitHub tools if enabled
+      // TODO: Fix type compatibility issues before enabling
+      // if (enableGitHub) {
+      //   tools.push(...githubTools);
+      // }
+
+      return { tools };
     });
 
     // Handle tool calls
@@ -371,46 +391,46 @@ export class ContextEngineMCPServer {
       const startTime = Date.now();
 
       // Log request (to stderr so it doesn't interfere with stdio transport)
-      console.error(`[${new Date().toISOString()}] Tool: ${name}`);
+      log.info(`Tool: ${name}`);
 
       try {
         let result: string;
 
         switch (name) {
           case 'index_workspace':
-            result = await handleIndexWorkspace(args as any, this.serviceClient);
+            result = await handleIndexWorkspace(schemas.IndexWorkspaceSchema.parse(args), this.serviceClient);
             break;
 
           case 'reindex_workspace':
-            result = await handleReindexWorkspace(args as any, this.serviceClient);
+            result = await handleReindexWorkspace(schemas.ReindexWorkspaceSchema.parse(args), this.serviceClient);
             break;
 
           case 'clear_index':
-            result = await handleClearIndex(args as any, this.serviceClient);
+            result = await handleClearIndex(schemas.ClearIndexSchema.parse(args), this.serviceClient);
             break;
 
           case 'index_status':
-            result = await handleIndexStatus(args as any, this.serviceClient);
+            result = await handleIndexStatus(schemas.IndexStatusSchema.parse(args), this.serviceClient);
             break;
 
           case 'tool_manifest':
-            result = await handleToolManifest(args as any, this.serviceClient);
+            result = await handleToolManifest(schemas.ToolManifestSchema.parse(args), this.serviceClient);
             break;
 
           case 'codebase_retrieval':
-            result = await handleCodebaseRetrieval(args as any, this.serviceClient);
+            result = await handleCodebaseRetrieval(schemas.CodebaseRetrievalSchema.parse(args), this.serviceClient);
             break;
 
           case 'semantic_search':
-            result = await handleSemanticSearch(args as any, this.serviceClient);
+            result = await handleSemanticSearch(schemas.SemanticSearchSchema.parse(args), this.serviceClient);
             break;
 
           case 'get_file':
-            result = await handleGetFile(args as any, this.serviceClient);
+            result = await handleGetFile(schemas.GetFileSchema.parse(args), this.serviceClient);
             break;
 
           case 'get_context_for_prompt':
-            result = await handleGetContext(args as any, this.serviceClient);
+            result = await handleGetContext(schemas.GetContextForPromptSchema.parse(args), this.serviceClient);
             break;
 
           /*
@@ -421,11 +441,11 @@ export class ContextEngineMCPServer {
 
           // Memory tools (v1.4.1)
           case 'add_memory':
-            result = await handleAddMemory(args as any, this.serviceClient);
+            result = await handleAddMemory(schemas.AddMemorySchema.parse(args), this.serviceClient);
             break;
 
           case 'list_memories':
-            result = await handleListMemories(args as any, this.serviceClient);
+            result = await handleListMemories(schemas.ListMemoriesSchema.parse(args), this.serviceClient);
             break;
 
           // Planning tools - LLM-powered via Ollama (Disabled)
@@ -440,7 +460,7 @@ export class ContextEngineMCPServer {
           */
 
           case 'visualize_plan':
-            result = await handleVisualizePlan(args as any, this.serviceClient);
+            result = await handleVisualizePlan(schemas.VisualizePlanSchema.parse(args), this.serviceClient);
             break;
 
           /*
@@ -451,35 +471,35 @@ export class ContextEngineMCPServer {
 
           // Plan management tools (Phase 2) - Pure I/O, re-enabled
           case 'save_plan':
-            result = await handleSavePlan(args as Record<string, unknown>);
+            result = await handleSavePlan(schemas.SavePlanSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'load_plan':
-            result = await handleLoadPlan(args as Record<string, unknown>);
+            result = await handleLoadPlan(schemas.LoadPlanSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'list_plans':
-            result = await handleListPlans(args as Record<string, unknown>);
+            result = await handleListPlans(schemas.ListPlansSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'delete_plan':
-            result = await handleDeletePlan(args as Record<string, unknown>);
+            result = await handleDeletePlan(schemas.DeletePlanSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'start_step':
-            result = await handleStartStep(args as Record<string, unknown>);
+            result = await handleStartStep(schemas.StartStepSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'complete_step':
-            result = await handleCompleteStep(args as Record<string, unknown>);
+            result = await handleCompleteStep(schemas.CompleteStepSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'view_progress':
-            result = await handleViewProgress(args as Record<string, unknown>);
+            result = await handleViewProgress(schemas.ViewProgressSchema.parse(args) as Record<string, unknown>);
             break;
 
           case 'view_history':
-            result = await handleViewHistory(args as Record<string, unknown>);
+            result = await handleViewHistory(schemas.ViewHistorySchema.parse(args) as Record<string, unknown>);
             break;
 
           // Code Review tools - LLM-powered via Ollama (Disabled)
@@ -504,32 +524,32 @@ export class ContextEngineMCPServer {
           // check_invariants removed (use linters instead)
 
           case 'run_static_analysis':
-            result = await handleRunStaticAnalysis(args as any, this.serviceClient);
+            result = await handleRunStaticAnalysis(schemas.RunStaticAnalysisSchema.parse(args), this.serviceClient);
             break;
 
           // Reactive Review tools
           case 'reactive_review_pr':
-            result = await handleReactiveReviewPR(args as any, this.serviceClient);
+            result = await handleReactiveReviewPR(schemas.ReactiveReviewPRSchema.parse(args), this.serviceClient);
             break;
 
           case 'get_review_status':
-            result = await handleGetReviewStatus(args as any, this.serviceClient);
+            result = await handleGetReviewStatus(schemas.GetReviewStatusSchema.parse(args), this.serviceClient);
             break;
 
           case 'pause_review':
-            result = await handlePauseReview(args as any, this.serviceClient);
+            result = await handlePauseReview(schemas.PauseReviewSchema.parse(args), this.serviceClient);
             break;
 
           case 'resume_review':
-            result = await handleResumeReview(args as any, this.serviceClient);
+            result = await handleResumeReview(schemas.ResumeReviewSchema.parse(args), this.serviceClient);
             break;
 
           case 'get_review_telemetry':
-            result = await handleGetReviewTelemetry(args as any, this.serviceClient);
+            result = await handleGetReviewTelemetry(schemas.GetReviewTelemetrySchema.parse(args), this.serviceClient);
             break;
 
           case 'scrub_secrets':
-            result = await handleScrubSecrets(args as any);
+            result = await handleScrubSecrets(schemas.ScrubSecretsSchema.parse(args));
             break;
 
           // validate_content removed (use scan_security instead)
@@ -549,54 +569,71 @@ export class ContextEngineMCPServer {
           */
 
           case 'scaffold_bmad':
-            result = await handleScaffoldBmad(args as any, this.serviceClient);
+            result = await handleScaffoldBmad(schemas.ScaffoldBMADSchema.parse(args), this.serviceClient);
             break;
 
           // New Tools (v3.0)
           case 'get_bmad_guidelines':
-            result = await handleGetBmadGuidelines(args as any);
+            result = await handleGetBmadGuidelines(schemas.GetBMADGuidelinesSchema.parse(args));
             break;
 
           case 'scan_security':
-            result = await handleScanSecurity(args as any, this.workspacePath);
+            result = await handleScanSecurity(schemas.ScanSecuritySchema.parse(args), this.workspacePath);
             break;
 
           // New Tools (v4.0) - Local utilities
           // find_todos removed (trivial grep)
 
           case 'file_statistics':
-            result = await handleFileStats(args as any, this.serviceClient);
+            result = await handleFileStats(schemas.FileStatsSchema.parse(args), this.serviceClient);
             break;
 
           case 'project_structure':
-            result = await handleProjectStructure(args as any, this.serviceClient);
+            result = await handleProjectStructure(schemas.ProjectStructureSchema.parse(args), this.serviceClient);
             break;
 
           case 'git_context':
-            result = await handleGitContext(args as any, this.serviceClient);
+            result = await handleGitContext(schemas.GitContextSchema.parse(args), this.serviceClient);
             break;
 
           // New Tools (v4.1) - AST-powered
           case 'find_symbol':
-            result = await handleFindSymbol(args as any, this.serviceClient);
+            result = await handleFindSymbol(schemas.FindSymbolSchema.parse(args), this.serviceClient);
             break;
 
           case 'dependency_graph':
-            result = await handleDependencyGraph(args as any, this.serviceClient);
+            result = await handleDependencyGraph(schemas.DependencyGraphSchema.parse(args), this.serviceClient);
             break;
 
           case 'code_metrics':
-            result = await handleCodeMetrics(args as any, this.serviceClient);
+            result = await handleCodeMetrics(schemas.CodeMetricsSchema.parse(args), this.serviceClient);
             break;
 
           // find_duplicates removed (low value)
+
+          // GitHub integration tools (optional)
+          case 'get_github_issues':
+            result = await handleGetGitHubIssues(schemas.GetGitHubIssuesSchema.parse(args), this.workspacePath);
+            break;
+
+          case 'get_github_issue':
+            result = await handleGetGitHubIssue(schemas.GetGitHubIssueSchema.parse(args), this.workspacePath);
+            break;
+
+          case 'search_github_issues':
+            result = await handleSearchGitHubIssues(schemas.SearchGitHubIssuesSchema.parse(args), this.workspacePath);
+            break;
+
+          case 'get_github_prs':
+            result = await handleGetGitHubPRs(schemas.GetGitHubPRsSchema.parse(args), this.workspacePath);
+            break;
 
           default:
             throw new Error(`Unknown tool: ${name}`);
         }
 
         const elapsed = Date.now() - startTime;
-        console.error(`[${new Date().toISOString()}] Tool ${name} completed in ${elapsed}ms`);
+        log.tool(name, elapsed, true);
 
         return {
           content: [
@@ -610,7 +647,7 @@ export class ContextEngineMCPServer {
         const elapsed = Date.now() - startTime;
         const errorMessage = error instanceof Error ? error.message : String(error);
 
-        console.error(`[${new Date().toISOString()}] Tool ${name} failed after ${elapsed}ms: ${errorMessage}`);
+        log.tool(name, elapsed, false, errorMessage);
 
         return {
           content: [
@@ -661,29 +698,29 @@ export class ContextEngineMCPServer {
   }
 
   private printBanner(transport: string, port?: number): void {
-    console.error('='.repeat(60));
-    console.error(`Context Engine MCP Server v${pkg.version}`);
-    console.error('='.repeat(60));
-    console.error(`Workspace : ${this.workspacePath}`);
+    log.info('='.repeat(60));
+    log.info(`Context Engine MCP Server v${pkg.version}`);
+    log.info('='.repeat(60));
+    log.info(`Workspace : ${this.workspacePath}`);
     if (transport === 'http') {
-      console.error(`Transport : StreamableHTTP on port ${port}`);
-      console.error(`Endpoint  : http://localhost:${port}/mcp`);
+      log.info(`Transport : StreamableHTTP on port ${port}`);
+      log.info(`Endpoint  : http://localhost:${port}/mcp`);
     } else {
-      console.error('Transport : stdio');
+      log.info('Transport : stdio');
     }
-    console.error(`Watcher   : ${this.enableWatcher ? 'enabled' : 'disabled'}`);
-    console.error('');
-    console.error('Available tools (27 core):');
-    console.error('  Core     : index_workspace, semantic_search, get_context_for_prompt, get_file, codebase_retrieval, tool_manifest');
-    console.error('  Index    : index_status, reindex_workspace, clear_index');
-    console.error('  Memory   : add_memory, list_memories');
-    console.error('  Planning : visualize_plan, save/load/list/delete_plan, start/complete_step, view_progress/history');
-    console.error('  Analysis : run_static_analysis, scan_security, file_stats, project_structure, git_context, find_symbol, dependency_graph, code_metrics');
-    console.error('  Review   : reactive_review_pr, get_review_status, pause/resume_review, get_review_telemetry, scrub_secrets');
-    console.error('  BMAD     : scaffold_bmad, get_bmad_guidelines');
-    console.error('');
-    console.error('Server ready. Waiting for requests...');
-    console.error('='.repeat(60));
+    log.info(`Watcher   : ${this.enableWatcher ? 'enabled' : 'disabled'}`);
+    log.info('');
+    log.info('Available tools (27 core):');
+    log.info('  Core     : index_workspace, semantic_search, get_context_for_prompt, get_file, codebase_retrieval, tool_manifest');
+    log.info('  Index    : index_status, reindex_workspace, clear_index');
+    log.info('  Memory   : add_memory, list_memories');
+    log.info('  Planning : visualize_plan, save/load/list/delete_plan, start/complete_step, view_progress/history');
+    log.info('  Analysis : run_static_analysis, scan_security, file_stats, project_structure, git_context, find_symbol, dependency_graph, code_metrics');
+    log.info('  Review   : reactive_review_pr, get_review_status, pause/resume_review, get_review_telemetry, scrub_secrets');
+    log.info('  BMAD     : scaffold_bmad, get_bmad_guidelines');
+    log.info('');
+    log.info('Server ready. Waiting for requests...');
+    log.info('='.repeat(60));
   }
 
   async indexWorkspace(): Promise<void> {

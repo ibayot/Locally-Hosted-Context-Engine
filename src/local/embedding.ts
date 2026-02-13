@@ -1,5 +1,8 @@
 import { pipeline, env } from '@xenova/transformers';
 import * as path from 'path';
+import { log } from '../utils/logger.js';
+import { EmbeddingWorkerPool } from '../workers/embeddingPool.js';
+import { featureEnabled } from '../config/features.js';
 
 // Disable local model checks if needed, or configure cache location
 // env.cacheDir = path.join(process.cwd(), '.local-context', 'models'); // Moving to configure()
@@ -10,6 +13,8 @@ export class LocalEmbeddingService {
     private modelName = 'Xenova/all-MiniLM-L6-v2';
     private initializationPromise: Promise<void> | null = null;
     private isConfigured = false;
+    private workerPool: EmbeddingWorkerPool | null = null;
+    private workspacePath: string | null = null;
 
     private constructor() { }
 
@@ -22,8 +27,9 @@ export class LocalEmbeddingService {
 
     public configure(workspacePath: string) {
         if (this.isConfigured) return;
+        this.workspacePath = workspacePath;
         env.cacheDir = path.join(workspacePath, '.local-context', 'models');
-        console.error(`[LocalEmbedding] Configured cache directory: ${env.cacheDir}`);
+        log.info(`[LocalEmbedding] Configured cache directory: ${env.cacheDir}`);
         this.isConfigured = true;
     }
 
@@ -34,22 +40,30 @@ export class LocalEmbeddingService {
         if (this.pipe) return;
         if (this.initializationPromise) return this.initializationPromise;
 
+        // Initialize worker pool if enabled
+        if (featureEnabled('use_worker_threads') && this.workspacePath && !this.workerPool) {
+            const cacheDir = path.join(this.workspacePath, '.local-context', 'models');
+            this.workerPool = new EmbeddingWorkerPool(this.modelName, cacheDir);
+            log.info('[LocalEmbedding] Worker pool initialized');
+            return; // Worker pool doesn't need main thread pipeline
+        }
+
         this.initializationPromise = (async () => {
             const maxRetries = 5;
             let lastError;
 
             for (let i = 0; i < maxRetries; i++) {
                 try {
-                    console.error(`[LocalEmbedding] Loading model ${this.modelName} (Attempt ${i + 1}/${maxRetries})...`);
+                    log.info(`[LocalEmbedding] Loading model ${this.modelName} (Attempt ${i + 1}/${maxRetries})...`);
                     this.pipe = await pipeline('feature-extraction', this.modelName);
-                    console.error('[LocalEmbedding] Model loaded successfully.');
+                    log.info('[LocalEmbedding] Model loaded successfully.');
                     return;
                 } catch (err) {
-                    console.error(`[LocalEmbedding] Failed to load model (Attempt ${i + 1}):`, err);
+                    log.error(`[LocalEmbedding] Failed to load model (Attempt ${i + 1})`, { error: String(err) });
                     lastError = err;
                     // Exponential backoff: 1s, 2s, 4s, 8s, 16s
                     const delay = Math.pow(2, i) * 1000;
-                    console.error(`[LocalEmbedding] Retrying in ${delay}ms...`);
+                    log.info(`[LocalEmbedding] Retrying in ${delay}ms...`);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
@@ -65,12 +79,19 @@ export class LocalEmbeddingService {
      * Returns a Float32Array of the embedding vector.
      */
     public async embed(text: string): Promise<Float32Array> {
+        // Use worker pool if available
+        if (this.workerPool) {
+            const embedding = await this.workerPool.embed(text);
+            return new Float32Array(embedding);
+        }
+
+        // Fallback to main thread
         if (!this.pipe) await this.init();
 
         // Generate output
-        // console.log(`[LocalEmbedding] Embedding text of length ${text.length}...`);
+        // log.debug(`[LocalEmbedding] Embedding text of length ${text.length}...`);
         const output = await this.pipe(text, { pooling: 'mean', normalize: true });
-        // console.log(`[LocalEmbedding] Embedding complete.`);
+        // log.debug(`[LocalEmbedding] Embedding complete.`);
 
         // Check if output is a Tensor and get data
         if (output && output.data) {

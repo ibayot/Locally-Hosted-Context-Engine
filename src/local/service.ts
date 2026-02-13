@@ -5,6 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { minimatch } from 'minimatch';
 import pLimit from 'p-limit';
+import { log } from '../utils/logger.js';
 
 // Adapting to internal interfaces
 export interface SearchOptions {
@@ -21,7 +22,7 @@ export class LocalContextService {
     }
 
     static async create(workspacePath: string, token?: string): Promise<LocalContextService> {
-        console.error('[LocalContextService] Initializing local context engine...');
+        log.info('[LocalContextService] Initializing local context engine...');
 
         // Configure and initialize embedding service first
         const embeddingService = LocalEmbeddingService.getInstance();
@@ -30,7 +31,7 @@ export class LocalContextService {
         try {
             await embeddingService.init();
         } catch (err) {
-            console.error('[LocalContextService] CRITICAL: Failed to initialize embedding model. Indexing will not work.', err);
+            log.error('[LocalContextService] CRITICAL: Failed to initialize embedding model. Indexing will not work.', { error: String(err) });
             // We allow the service to be created, but it won't be able to index/search effectively.
             // Or should we throw? throwing might crash the server. 
             // Let's throw for now as without embeddings we are dead.
@@ -46,13 +47,11 @@ export class LocalContextService {
      * Index the workspace locally using parallel processing.
      */
     async index(): Promise<void> {
-        console.error('[LocalContextService] Starting local indexing (Parallel Mode)...');
         const startTime = Date.now();
         const limit = pLimit(1); // Serial execution to save CPU
 
         // 1. Find all files
         const files = await this.findFiles(this.workspacePath);
-        console.error(`[LocalContextService] Found ${files.length} files to index.`);
 
         // 2. Process files
         let indexedCount = 0;
@@ -64,10 +63,10 @@ export class LocalContextService {
                 await this.store.addFile(file, content);
                 indexedCount++;
                 if (indexedCount % 50 === 0) {
-                    console.error(`[LocalContextService] Indexed ${indexedCount}/${files.length} files...`);
+                    log.info(`[LocalContextService] Indexed ${indexedCount}/${files.length} files...`);
                 }
             } catch (err) {
-                console.error(`[LocalContextService] Failed to index ${file}:`, err);
+                log.error(`[LocalContextService] Failed to index ${file}`, { error: String(err) });
             }
         }));
 
@@ -75,7 +74,8 @@ export class LocalContextService {
 
         // 3. Save index
         await this.store.save();
-        console.error(`[LocalContextService] Parallel Indexing complete in ${Date.now() - startTime}ms.`);
+        const duration = Date.now() - startTime;
+        log.indexing(files.length, duration, 'parallel indexing');
     }
 
     /**
@@ -97,7 +97,7 @@ export class LocalContextService {
                 }
                 await this.store.addFile(fullPath, file.contents);
             } catch (error) {
-                console.error(`[LocalContextService] Failed to add file ${file.path}:`, error);
+                log.error(`[LocalContextService] Failed to add file ${file.path}`, { error: String(error) });
             }
         }
         // Auto-save after batch update
@@ -124,7 +124,7 @@ export class LocalContextService {
                 }
             }
         } catch (err) {
-            console.error(`Error walking ${dir}:`, err);
+            log.error(`Error walking ${dir}`, { error: String(err) });
         }
         return results;
     }
@@ -227,7 +227,7 @@ export class LocalContextService {
             ];
             return await ollama.chat(messages);
         } catch (err: any) {
-            console.error('[LocalContextService] Ollama chat error:', err.message);
+            log.error('[LocalContextService] Ollama chat error', { error: err.message });
             return `[Local Context Engine] LLM generation failed: ${err.message}`;
         }
     }
@@ -248,14 +248,14 @@ export class LocalContextService {
 
         if (!available) {
             // Fallback: return raw search results
-            console.error('[LocalContextService] Ollama not available, returning retrieval-only results.');
+            log.info('[LocalContextService] Ollama not available, returning retrieval-only results.');
             return `[Local Context - Retrieval Only]\n\n${context}\n\n(Note: Install and run Ollama for AI-powered answers: ollama serve && ollama pull qwen2.5-coder:7b)`;
         }
 
         try {
             return await ollama.searchAndAsk(query, context, prompt);
         } catch (err: any) {
-            console.error('[LocalContextService] Ollama searchAndAsk error:', err.message);
+            log.error('[LocalContextService] Ollama searchAndAsk error', { error: err.message });
             return `[Local Context - Retrieval Only]\n\n${context}\n\n(LLM generation failed: ${err.message})`;
         }
     }
@@ -264,7 +264,7 @@ export class LocalContextService {
         // We ignore the specific path for now and save to default .local-context location
         // or we could copy the internal index file to destination.
         // Ideally we respect the path.
-        console.error(`[LocalContextService] Exporting to ${filePath} (mocked - internal store auto-saves)`);
+        log.info(`[LocalContextService] Exporting to ${filePath} (mocked - internal store auto-saves)`);
         await this.store.save();
     }
 }
