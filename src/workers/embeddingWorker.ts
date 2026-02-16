@@ -5,9 +5,18 @@
 
 import { parentPort, workerData } from 'worker_threads';
 import { pipeline, env as transformersEnv } from '@xenova/transformers';
+import * as fs from 'fs';
+import * as path from 'path';
 
-// Disable remote model loading in worker
-transformersEnv.allowRemoteModels = false;
+// Allow remote models if cache is empty (first run)
+const modelCacheExists = workerData.cacheDir && fs.existsSync(workerData.cacheDir);
+if (modelCacheExists) {
+  // Model already downloaded, use local only
+  transformersEnv.allowRemoteModels = false;
+} else {
+  // First run, allow download
+  transformersEnv.allowRemoteModels = true;
+}
 
 interface EmbeddingTask {
   id: string;

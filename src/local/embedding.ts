@@ -28,8 +28,14 @@ export class LocalEmbeddingService {
     public configure(workspacePath: string) {
         if (this.isConfigured) return;
         this.workspacePath = workspacePath;
-        env.cacheDir = path.join(workspacePath, '.local-context', 'models');
-        log.info(`[LocalEmbedding] Configured cache directory: ${env.cacheDir}`);
+        const cacheDir = path.join(workspacePath, '.local-context', 'models');
+        env.cacheDir = cacheDir;
+        
+        // Allow remote downloads for model initialization
+        env.allowRemoteModels = true;
+        env.allowLocalModels = true;
+        
+        log.info(`[LocalEmbedding] Configured cache directory: ${cacheDir}`);
         this.isConfigured = true;
     }
 
@@ -40,9 +46,20 @@ export class LocalEmbeddingService {
         if (this.pipe) return;
         if (this.initializationPromise) return this.initializationPromise;
 
-        // Initialize worker pool if enabled
+        // Initialize worker pool if enabled (after ensuring model is cached)
         if (featureEnabled('use_worker_threads') && this.workspacePath && !this.workerPool) {
             const cacheDir = path.join(this.workspacePath, '.local-context', 'models');
+            
+            // Pre-download model in main thread first to ensure it's cached
+            log.info('[LocalEmbedding] Pre-downloading model before worker pool initialization...');
+            try {
+                const tempPipe = await pipeline('feature-extraction', this.modelName);
+                log.info('[LocalEmbedding] Model cached successfully, initializing worker pool');
+            } catch (err) {
+                log.error('[LocalEmbedding] Failed to pre-download model', { error: String(err) });
+                throw err;
+            }
+            
             this.workerPool = new EmbeddingWorkerPool(this.modelName, cacheDir);
             log.info('[LocalEmbedding] Worker pool initialized');
             return; // Worker pool doesn't need main thread pipeline

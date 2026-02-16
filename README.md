@@ -142,6 +142,16 @@ v1.3 includes optional native modules (better-sqlite3, hnswlib-node) for high pe
 **Worker threads not starting?**
 Set `CE_WORKER_THREADS=false` in `.env` to fallback to single-threaded embedding.
 
+**Model download errors (`local_files_only=true` error)?**
+```
+Error: `local_files_only=true` and file was not found locally at tokenizer.json
+```
+This happens on first run when the embedding model needs to download. Fixed in latest version, but if you see it:
+- Ensure you have internet connection on first server start
+- The model (~100MB) downloads to `.local-context/models/` in your workspace
+- Subsequent runs use the cached model
+- If behind a proxy, set `HTTP_PROXY` and `HTTPS_PROXY` env vars
+
 **GitHub tools not working?**
 - Ensure workspace has a GitHub remote: `git remote -v`
 - Set `GITHUB_TOKEN` env var (optional but raises rate limit from 60 to 5000/hr)
